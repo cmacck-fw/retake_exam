@@ -1,0 +1,1136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Retake Examination Portal</title>
+    <!-- Tailwind CSS Play CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .animate-fade-in {
+            animation: fadeIn 0.4s ease-out forwards;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        /* Hide scrollbars but keep functionality */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 min-h-screen font-sans text-gray-900 antialiased p-4 md:p-8">
+
+    <!-- ==================== GLOBAL CUSTOM ALERT MODAL ==================== -->
+    <div id="alert-modal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm hidden">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="flex justify-between items-center p-4 border-b">
+                <h2 id="alert-title" class="text-xl font-bold text-gray-800">Alert</h2>
+                <button onclick="closeAlert()" class="text-gray-500 hover:text-gray-800">
+                    <i class="fa-solid fa-circle-xmark text-2xl"></i>
+                </button>
+            </div>
+            <div class="p-4 overflow-y-auto">
+                <div id="alert-content-box" class="p-4 rounded-lg flex items-start gap-4">
+                    <span id="alert-icon" class="mt-1 flex-shrink-0 text-2xl"></span>
+                    <p id="alert-message" class="font-medium"></p>
+                </div>
+                <div class="mt-6 flex justify-end">
+                    <button onclick="closeAlert()" class="px-6 py-2 rounded-lg font-medium bg-blue-600 text-white hover:bg-blue-700 transition-all duration-200">
+                        Understood
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== PORTAL VIEWS WRAPPER ==================== -->
+    <div id="app-container" class="max-w-7xl mx-auto">
+
+        <!-- --- VIEW 1: LANDING PAGE --- -->
+        <section id="view-landing" class="max-w-4xl mx-auto mt-20 text-center animate-fade-in">
+            <div class="inline-flex items-center justify-center p-4 bg-blue-100 text-blue-700 rounded-2xl mb-6 shadow-sm">
+                <i class="fa-solid fa-shield-halved text-4xl"></i>
+            </div>
+            <h1 class="text-4xl md:text-5xl font-extrabold text-gray-900 mb-6 tracking-tight">Retake Examination Portal</h1>
+            <p class="text-xl text-gray-500 mb-12 max-w-2xl mx-auto">A secure, interactive platform for conducting academic retake assessments with instant live Cloud synchronization.</p>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-2xl mx-auto">
+                <div onclick="navigateTo('student_login')" class="bg-white p-8 rounded-2xl shadow-md hover:shadow-xl transition-all cursor-pointer border border-transparent hover:border-blue-500 group">
+                    <i class="fa-solid fa-user-graduate text-4xl text-blue-500 mb-4 group-hover:scale-110 transition-transform"></i>
+                    <h2 class="text-2xl font-bold mb-2">Student Access</h2>
+                    <p class="text-gray-500">Login to take your assigned retake examinations.</p>
+                </div>
+                
+                <div onclick="navigateTo('teacher_login')" class="bg-white p-8 rounded-2xl shadow-md hover:shadow-xl transition-all cursor-pointer border border-transparent hover:border-indigo-500 group">
+                    <i class="fa-solid fa-chalkboard-user text-4xl text-indigo-500 mb-4 group-hover:scale-110 transition-transform"></i>
+                    <h2 class="text-2xl font-bold mb-2">Teacher Admin</h2>
+                    <p class="text-gray-500">Manage exams, upload questions, and configure live export.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- --- VIEW 2: TEACHER LOGIN --- -->
+        <section id="view-teacher_login" class="max-w-md mx-auto mt-20 bg-white p-8 rounded-2xl shadow-xl animate-fade-in hidden">
+            <div class="text-center mb-8">
+                <i class="fa-solid fa-lock text-4xl text-indigo-600 mb-4"></i>
+                <h2 class="text-2xl font-bold text-gray-800">Teacher Authentication</h2>
+                <p class="text-gray-500">Enter Admin PIN to manage exams</p>
+            </div>
+            <form onsubmit="handleTeacherLogin(event)" class="space-y-6">
+                <div class="flex flex-col gap-1">
+                    <label class="text-sm font-semibold text-gray-700">Admin PIN (Hint: 8888) <span class="text-red-500">*</span></label>
+                    <input id="teacher-pin" type="password" required placeholder="••••" class="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
+                </div>
+                <button type="submit" class="w-full py-3 rounded-lg font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-all duration-200 text-lg">Access Dashboard</button>
+            </form>
+            <button onclick="navigateTo('landing')" class="w-full text-center mt-6 text-sm text-gray-400 hover:text-gray-600">Cancel</button>
+        </section>
+
+        <!-- --- VIEW 3: TEACHER ADMIN --- -->
+        <section id="view-teacher_admin" class="max-w-6xl mx-auto animate-fade-in pb-12 hidden">
+            <!-- Header -->
+            <div class="flex justify-between items-center mb-8 flex-wrap gap-4">
+                <div>
+                    <h1 class="text-3xl font-bold text-gray-800">Teacher Dashboard</h1>
+                    <p class="text-gray-500">Manage retake exams, view results, and configure live sheet sync.</p>
+                </div>
+                <button onclick="navigateTo('landing')" class="border-2 border-red-500 text-red-500 hover:bg-red-50 px-4 py-2 rounded-lg font-medium transition-all flex items-center gap-2">
+                    <i class="fa-solid fa-right-from-bracket"></i> Logout
+                </button>
+            </div>
+
+            <!-- Tab Headers -->
+            <div class="flex gap-4 mb-8 border-b pb-4 overflow-x-auto no-scrollbar">
+                <button onclick="switchTeacherTab('exams')" id="tab-exams-btn" class="px-4 py-2 font-semibold rounded-lg transition-colors bg-blue-100 text-blue-700">
+                    Manage Exams
+                </button>
+                <button onclick="switchTeacherTab('results')" id="tab-results-btn" class="px-4 py-2 font-semibold rounded-lg transition-colors text-gray-500 hover:bg-gray-100">
+                    Student Results
+                </button>
+                <button onclick="switchTeacherTab('settings')" id="tab-settings-btn" class="px-4 py-2 font-semibold rounded-lg transition-colors flex items-center gap-1.5 text-gray-500 hover:bg-gray-100">
+                    <i class="fa-solid fa-gears"></i> Live Sheet Integration
+                </button>
+            </div>
+
+            <!-- TAB 1: MANAGE EXAMS -->
+            <div id="tab-exams" class="space-y-6">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-xl font-bold text-gray-700">Active Exams</h2>
+                    <button onclick="openExamCreator()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-all flex items-center gap-2">
+                        <i class="fa-solid fa-plus"></i> Create New Exam
+                    </button>
+                </div>
+                <div id="exams-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <!-- Dynamic Exam Cards -->
+                </div>
+            </div>
+
+            <!-- TAB 2: STUDENT RESULTS -->
+            <div id="tab-results" class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 hidden">
+                <div class="flex justify-between items-center mb-6 flex-wrap gap-4">
+                    <h2 class="text-xl font-bold text-gray-700">Exam Records</h2>
+                    <button onclick="exportResultsCSV()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-medium transition-all flex items-center gap-2">
+                        <i class="fa-solid fa-download"></i> Export Manual CSV
+                    </button>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="bg-gray-50 border-b border-gray-200 text-gray-600 text-sm">
+                                <th class="p-3">Date</th>
+                                <th class="p-3">Student</th>
+                                <th class="p-3">Class (No.)</th>
+                                <th class="p-3">Subject</th>
+                                <th class="p-3">Score</th>
+                                <th class="p-3">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="results-table-body">
+                            <!-- Dynamic Results rows -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- TAB 3: LIVE SHEET INTEGRATION -->
+            <div id="tab-settings" class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 max-w-4xl hidden">
+                <h2 class="text-xl font-bold text-gray-800 mb-2">Google Sheets Live Integration</h2>
+                <p class="text-gray-500 text-sm mb-6">Connect your portal directly to a target Google Sheet spreadsheet to record student submissions instantly.</p>
+                
+                <div class="space-y-4 mb-8">
+                    <div class="flex flex-col gap-1">
+                        <label class="text-sm font-semibold text-gray-700">Google Web App URL (Deployment Webhook)</label>
+                        <input id="webhook-url-input" type="text" oninput="saveWebhookUrl()" placeholder="https://script.google.com/macros/s/.../exec" class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
+                    </div>
+                    <div id="sync-status-active" class="flex items-center gap-2 text-green-700 bg-green-50 p-3 rounded-lg border border-green-100 text-sm font-semibold hidden">
+                        <i class="fa-solid fa-circle-check text-lg"></i> Live sync is active! Student results will be exported live.
+                    </div>
+                    <div id="sync-status-inactive" class="flex items-center gap-2 text-amber-700 bg-amber-50 p-3 rounded-lg border border-amber-100 text-sm">
+                        <i class="fa-solid fa-circle-exclamation text-lg flex-shrink-0"></i> No URL provided. Student scores will be saved in the offline browser storage only.
+                    </div>
+                </div>
+
+                <div class="border-t pt-6">
+                    <h3 class="font-bold text-gray-700 mb-3 text-sm uppercase tracking-wide">Quick Guide to setting up your Google Sheet:</h3>
+                    <ol class="list-decimal list-inside text-sm text-gray-600 space-y-2.5">
+                        <li>Create a blank Google Sheet.</li>
+                        <li>Go to <strong>Extensions</strong> &rarr; <strong>Apps Script</strong>.</li>
+                        <li>Paste the Google Apps Script Webhook handler code.</li>
+                        <li>Click <strong>Deploy &rarr; New deployment &rarr; Web app</strong>.</li>
+                        <li>Set access to <strong>"Anyone"</strong>, deploy, and copy the Web App URL into the box above.</li>
+                    </ol>
+                </div>
+            </div>
+        </section>
+
+        <!-- --- VIEW 4: CREATING/EDITING EXAM --- -->
+        <section id="view-exam_editor" class="max-w-4xl mx-auto pb-12 hidden">
+            <button onclick="closeExamEditor()" class="flex items-center text-blue-600 mb-6 hover:underline font-medium gap-2">
+                <i class="fa-solid fa-chevron-left"></i> Back to Exams
+            </button>
+            
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6">
+                <h2 class="text-2xl font-bold mb-6 text-gray-800">Exam Details</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="flex flex-col gap-1">
+                        <label class="text-sm font-semibold text-gray-700">Subject Name <span class="text-red-500">*</span></label>
+                        <input id="edit-subject" type="text" placeholder="e.g. Mathematics Sec 2" class="border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div class="flex flex-col gap-1">
+                        <label class="text-sm font-semibold text-gray-700">Subject Teacher <span class="text-red-500">*</span></label>
+                        <input id="edit-teacher" type="text" placeholder="e.g. Mr. Chan" class="border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div class="flex flex-col gap-1">
+                        <label class="text-sm font-semibold text-gray-700">Duration (Minutes) <span class="text-red-500">*</span></label>
+                        <input id="edit-duration" type="number" value="30" class="border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div class="flex flex-col gap-1">
+                        <label class="text-sm font-semibold text-gray-700">Passing Score (%) <span class="text-red-500">*</span></label>
+                        <input id="edit-passing" type="number" value="50" class="border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                </div>
+
+                <div class="mt-6 border-t pt-4">
+                    <label class="text-sm font-semibold text-gray-700 flex items-center gap-1.5 mb-1">
+                        <i class="fa-solid fa-file-invoice text-blue-600"></i> Databank / Reference Material (Optional)
+                    </label>
+                    <p class="text-xs text-gray-400 mb-2">If you have reference tables, passages, formulas, or maps, enter them here. Students will see this on the left-hand side of their screens during the examination.</p>
+                    <textarea id="edit-reference" placeholder="Paste reference data, booklets, or texts here..." class="w-full h-32 border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 font-sans"></textarea>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                <div class="flex justify-between items-center mb-6 flex-wrap gap-4">
+                    <h2 class="text-2xl font-bold text-gray-800">Questions (<span id="editor-question-count">0</span>)</h2>
+                    <div class="flex gap-2">
+                        <input type="file" id="csv-file-input" accept=".csv" onchange="handleCSVUpload(event)" class="hidden">
+                        <button onclick="triggerCSVSelect()" class="border-2 border-blue-600 text-blue-600 hover:bg-blue-50 px-4 py-2 rounded-lg font-medium transition-all flex items-center gap-2">
+                            <i class="fa-solid fa-file-upload"></i> Upload CSV
+                        </button>
+                        <button onclick="addManualQuestion()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-all flex items-center gap-2">
+                            <i class="fa-solid fa-plus"></i> Add Manually
+                        </button>
+                    </div>
+                </div>
+
+                <div id="questions-editor-list" class="space-y-6">
+                    <!-- Questions dynamic editor cards -->
+                </div>
+
+                <div class="mt-8 flex justify-end">
+                    <button onclick="saveCreatedExam()" class="px-8 py-3 text-lg shadow-lg bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-all flex items-center gap-2">
+                        <i class="fa-solid fa-floppy-disk"></i> Save Exam
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- --- VIEW 5: STUDENT LOGIN --- -->
+        <section id="view-student_login" class="max-w-md mx-auto mt-20 bg-white p-8 rounded-2xl shadow-xl animate-fade-in hidden">
+            <div class="text-center mb-8">
+                <div class="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 text-blue-600">
+                    <i class="fa-solid fa-user-graduate text-3xl"></i>
+                </div>
+                <h2 class="text-2xl font-bold text-gray-800">Student Portal</h2>
+                <p class="text-gray-500">Enter your details to take a retake exam</p>
+            </div>
+            
+            <form onsubmit="handleStudentLogin(event)" class="space-y-5">
+                <div class="flex flex-col gap-1">
+                    <label class="text-sm font-semibold text-gray-700">Full Name <span class="text-red-500">*</span></label>
+                    <input id="stud-name" type="text" required placeholder="e.g. Chan Tai Man" class="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="flex flex-col gap-1">
+                        <label class="text-sm font-semibold text-gray-700">Class <span class="text-red-500">*</span></label>
+                        <input id="stud-class" type="text" required placeholder="e.g. 3A" class="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none">
+                    </div>
+                    <div class="flex flex-col gap-1">
+                        <label class="text-sm font-semibold text-gray-700">Class Number <span class="text-red-500">*</span></label>
+                        <input id="stud-no" type="number" required placeholder="e.g. 15" class="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none">
+                    </div>
+                </div>
+                <button type="submit" class="w-full py-3 mt-4 text-lg rounded-lg font-medium bg-blue-600 text-white hover:bg-blue-700 transition-all">Enter Dashboard</button>
+            </form>
+            <button onclick="navigateTo('landing')" class="w-full text-center mt-6 text-sm text-gray-400 hover:text-gray-600">Cancel & Return</button>
+        </section>
+
+        <!-- --- VIEW 6: STUDENT DASHBOARD --- -->
+        <section id="view-student_dashboard" class="max-w-5xl mx-auto animate-fade-in pb-12 hidden">
+            <div class="bg-blue-600 text-white rounded-2xl p-8 mb-8 flex justify-between items-center shadow-lg flex-wrap gap-4">
+                <div>
+                    <h1 class="text-3xl font-bold mb-1">Welcome, <span id="dash-student-name">Student</span></h1>
+                    <p class="text-blue-200">Class: <span id="dash-student-class">--</span> | No: <span id="dash-student-no">--</span></p>
+                </div>
+                <button onclick="exitStudentSession()" class="border-white border-2 text-white hover:bg-blue-500 px-4 py-2 rounded-lg font-medium transition-all flex items-center gap-2">
+                    <i class="fa-solid fa-arrow-right-from-bracket"></i> Exit
+                </button>
+            </div>
+
+            <h2 class="text-2xl font-bold text-gray-800 mb-6">Available Retake Exams</h2>
+            <div id="student-exams-container" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- Dynamic student exams list -->
+            </div>
+        </section>
+
+        <!-- --- VIEW 7: EXAM PLAYER --- -->
+        <section id="view-exam_player" class="max-w-7xl mx-auto px-4 mt-6 animate-fade-in pb-12 hidden">
+            <!-- Full width or split screen structure depending on database -->
+            <div id="exam-player-layout-container">
+                <!-- Renders side-by-side or singular based on activeExam.referenceMaterial -->
+            </div>
+        </section>
+
+        <!-- --- VIEW 8: EXAM RESULT --- -->
+        <section id="view-exam_result" class="max-w-2xl mx-auto mt-16 text-center animate-fade-in bg-white p-12 rounded-3xl shadow-xl border border-gray-100 hidden">
+            <div id="result-badge-container">
+                <!-- Icon container -->
+            </div>
+            
+            <h1 id="result-header" class="text-4xl font-bold text-gray-800 mb-2">Exam Completed</h1>
+            <p class="text-gray-500 mb-8 text-lg">Your results have been automatically securely recorded.</p>
+            
+            <div class="bg-gray-50 rounded-2xl p-8 mb-8 inline-block text-left min-w-[300px] border border-gray-200 shadow-sm">
+                <div class="space-y-4">
+                    <div class="flex justify-between border-b pb-2"><span class="text-gray-500">Subject:</span> <span id="res-subject" class="font-bold">--</span></div>
+                    <div class="flex justify-between border-b pb-2"><span class="text-gray-500">Score:</span> <span id="res-score" class="font-bold text-blue-600">0 / 0</span></div>
+                    <div class="flex justify-between border-b pb-2"><span class="text-gray-500">Percentage:</span> <span id="res-percentage" class="font-bold">0%</span></div>
+                    <div class="flex justify-between pt-2"><span class="text-gray-500">Status:</span> <span id="res-status" class="font-bold">--</span></div>
+                </div>
+            </div>
+            
+            <div class="mt-8">
+                <button onclick="navigateTo('student_dashboard')" class="px-8 py-3 w-full max-w-sm mx-auto rounded-lg font-medium bg-blue-600 text-white hover:bg-blue-700 transition-all shadow-md">
+                    Return to Dashboard
+                </button>
+            </div>
+        </section>
+
+    </div>
+
+    <!-- ==================== CONTROLLER & APP ENGINE ==================== -->
+    <script>
+        // Global State & Data Store
+        let state = {
+            view: 'landing',
+            exams: [],
+            results: [],
+            webhookUrl: '',
+            currentStudent: null,
+            activeExam: null,
+            currentIndex: 0,
+            timeLeft: 0,
+            cheatWarnings: 0,
+            timerInterval: null,
+            // Temporary editing model when creating or editing an exam
+            editingExam: null 
+        };
+
+        // Initialize state from local storage on load
+        window.addEventListener('DOMContentLoaded', () => {
+            initApp();
+            
+            // Set up anti-cheat warning
+            window.addEventListener('blur', () => {
+                if (state.view === 'exam_player') {
+                    state.cheatWarnings += 1;
+                    showAlert("Warning", "Navigating away from the exam tab is not allowed. This incident has been recorded.", "error");
+                }
+            });
+        });
+
+        function initApp() {
+            const savedExams = localStorage.getItem('retake_exams');
+            const savedResults = localStorage.getItem('retake_results');
+            const savedUrl = localStorage.getItem('retake_webhook_url');
+
+            state.exams = savedExams ? JSON.parse(savedExams) : [];
+            state.results = savedResults ? JSON.parse(savedResults) : [];
+            state.webhookUrl = savedUrl ? savedUrl : '';
+
+            // Set webhook settings UI
+            document.getElementById('webhook-url-input').value = state.webhookUrl;
+            updateSyncStatus();
+
+            renderExams();
+            renderResults();
+            navigateTo('landing');
+        }
+
+        // --- View Navigation Router ---
+        function navigateTo(viewName) {
+            state.view = viewName;
+            
+            // Hide all views
+            const views = ['view-landing', 'view-teacher_login', 'view-teacher_admin', 'view-exam_editor', 'view-student_login', 'view-student_dashboard', 'view-exam_player', 'view-exam_result'];
+            views.forEach(id => {
+                document.getElementById(id).classList.add('hidden');
+            });
+
+            // Show target view
+            document.getElementById(`view-${viewName}`).classList.remove('hidden');
+
+            // View-specific renders or setups
+            if (viewName === 'teacher_admin') {
+                renderExams();
+                renderResults();
+            } else if (viewName === 'student_dashboard') {
+                document.getElementById('dash-student-name').innerText = state.currentStudent.name;
+                document.getElementById('dash-student-class').innerText = state.currentStudent.studentClass;
+                document.getElementById('dash-student-no').innerText = state.currentStudent.classNo;
+                renderStudentDashboardExams();
+            } else if (viewName === 'exam_player') {
+                state.currentIndex = 0;
+                state.cheatWarnings = 0;
+                state.timeLeft = state.activeExam.duration * 60;
+                startTimer();
+                renderExamPlayer();
+            }
+        }
+
+        // --- Custom Alert Manager ---
+        function showAlert(title, message, type = 'info') {
+            document.getElementById('alert-title').innerText = title;
+            document.getElementById('alert-message').innerText = message;
+            
+            const iconSpan = document.getElementById('alert-icon');
+            const contentBox = document.getElementById('alert-content-box');
+            
+            iconSpan.innerHTML = '';
+            contentBox.className = 'p-4 rounded-lg flex items-start gap-4';
+
+            if (type === 'error') {
+                iconSpan.innerHTML = '<i class="fa-solid fa-triangle-exclamation text-red-500"></i>';
+                contentBox.classList.add('bg-red-50', 'text-red-800', 'border', 'border-red-200');
+            } else if (type === 'success') {
+                iconSpan.innerHTML = '<i class="fa-solid fa-circle-check text-green-500"></i>';
+                contentBox.classList.add('bg-green-50', 'text-green-800', 'border', 'border-green-200');
+            } else {
+                iconSpan.innerHTML = '<i class="fa-solid fa-circle-info text-blue-500"></i>';
+                contentBox.classList.add('bg-blue-50', 'text-blue-800', 'border', 'border-blue-200');
+            }
+
+            document.getElementById('alert-modal').classList.remove('hidden');
+        }
+
+        function closeAlert() {
+            document.getElementById('alert-modal').classList.add('hidden');
+        }
+
+        // --- Teacher Authentication & Tab Handling ---
+        function handleTeacherLogin(e) {
+            e.preventDefault();
+            const pinVal = document.getElementById('teacher-pin').value;
+            if (pinVal === '8888') {
+                document.getElementById('teacher-pin').value = '';
+                navigateTo('teacher_admin');
+            } else {
+                showAlert("Access Denied", "Incorrect Teacher PIN. Hint: 8888", "error");
+            }
+        }
+
+        function switchTeacherTab(tabName) {
+            const tabs = ['exams', 'results', 'settings'];
+            tabs.forEach(t => {
+                document.getElementById(`tab-${t}`).classList.add('hidden');
+                document.getElementById(`tab-${t}-btn`).className = 'px-4 py-2 font-semibold rounded-lg transition-colors text-gray-500 hover:bg-gray-100';
+            });
+
+            document.getElementById(`tab-${tabName}`).classList.remove('hidden');
+            document.getElementById(`tab-${tabName}-btn`).className = 'px-4 py-2 font-semibold rounded-lg transition-colors bg-blue-100 text-blue-700';
+        }
+
+        // --- Live Sync Config Management ---
+        function saveWebhookUrl() {
+            const url = document.getElementById('webhook-url-input').value.trim();
+            state.webhookUrl = url;
+            localStorage.setItem('retake_webhook_url', url);
+            updateSyncStatus();
+        }
+
+        function updateSyncStatus() {
+            if (state.webhookUrl) {
+                document.getElementById('sync-status-active').classList.remove('hidden');
+                document.getElementById('sync-status-inactive').classList.add('hidden');
+            } else {
+                document.getElementById('sync-status-active').classList.add('hidden');
+                document.getElementById('sync-status-inactive').classList.remove('hidden');
+            }
+        }
+
+        // --- Teacher Exam Renders & Management ---
+        function renderExams() {
+            const container = document.getElementById('exams-container');
+            container.innerHTML = '';
+
+            if (state.exams.length === 0) {
+                container.innerHTML = `
+                    <div class="col-span-full text-center py-16 bg-white rounded-xl shadow-sm border border-gray-100">
+                        <i class="fa-solid fa-file-invoice text-4xl text-gray-300 mb-4"></i>
+                        <h3 class="text-lg font-medium text-gray-600">No exams created yet</h3>
+                        <p class="text-gray-400 mt-1">Click "Create New Exam" to get started.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            state.exams.forEach(exam => {
+                const card = document.createElement('div');
+                card.className = "bg-white rounded-xl shadow-sm border border-gray-200 p-6 flex flex-col hover:shadow-md transition-shadow animate-fade-in";
+                card.innerHTML = `
+                    <h3 class="text-xl font-bold text-blue-800 mb-2">${escapeHtml(exam.subject)}</h3>
+                    <p class="text-gray-600 text-sm mb-2">Teacher: ${escapeHtml(exam.teacher)}</p>
+                    <div class="flex flex-wrap items-center gap-3 text-xs text-gray-500 mb-6">
+                        <span class="flex items-center gap-1 bg-gray-100 px-2 py-1 rounded"><i class="fa-solid fa-clock"></i> ${exam.duration}m</span>
+                        <span class="flex items-center gap-1 bg-gray-100 px-2 py-1 rounded"><i class="fa-solid fa-list-check"></i> ${exam.questions.length} Qs</span>
+                        ${exam.referenceMaterial ? `
+                            <span class="flex items-center gap-1 bg-amber-50 text-amber-700 border border-amber-200 px-2 py-1 rounded font-semibold">
+                                <i class="fa-solid fa-database"></i> Has Databank File
+                            </span>
+                        ` : ''}
+                    </div>
+                    <div class="mt-auto flex gap-2">
+                        <button onclick="editExam('${exam.id}')" class="flex-1 bg-gray-100 text-gray-800 hover:bg-gray-200 px-4 py-2 rounded-lg font-medium transition-all flex items-center justify-center gap-2">
+                            <i class="fa-solid fa-pen-to-square"></i> Edit
+                        </button>
+                        <button onclick="deleteExam('${exam.id}')" class="bg-red-100 text-red-700 hover:bg-red-200 px-3 py-2 rounded-lg font-medium transition-all">
+                            <i class="fa-solid fa-trash-can"></i>
+                        </button>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        // --- Teacher Action Handlers ---
+        function openExamCreator() {
+            state.editingExam = {
+                id: Date.now().toString(),
+                subject: '',
+                teacher: '',
+                duration: 30,
+                passingScore: 50,
+                referenceMaterial: '',
+                questions: []
+            };
+            syncEditorFields();
+            navigateTo('exam_editor');
+        }
+
+        function editExam(examId) {
+            const target = state.exams.find(e => e.id === examId);
+            if (!target) return;
+            state.editingExam = JSON.parse(JSON.stringify(target)); // deep copy
+            syncEditorFields();
+            navigateTo('exam_editor');
+        }
+
+        function deleteExam(examId) {
+            state.exams = state.exams.filter(e => e.id !== examId);
+            localStorage.setItem('retake_exams', JSON.stringify(state.exams));
+            renderExams();
+            showAlert("Deleted", "The exam was removed successfully.", "success");
+        }
+
+        function closeExamEditor() {
+            state.editingExam = null;
+            navigateTo('teacher_admin');
+        }
+
+        // --- Exam Form Sync & Rendering ---
+        function syncEditorFields() {
+            document.getElementById('edit-subject').value = state.editingExam.subject;
+            document.getElementById('edit-teacher').value = state.editingExam.teacher;
+            document.getElementById('edit-duration').value = state.editingExam.duration;
+            document.getElementById('edit-passing').value = state.editingExam.passingScore;
+            document.getElementById('edit-reference').value = state.editingExam.referenceMaterial;
+            
+            document.getElementById('editor-question-count').innerText = state.editingExam.questions.length;
+            renderEditorQuestions();
+        }
+
+        function renderEditorQuestions() {
+            const container = document.getElementById('questions-editor-list');
+            container.innerHTML = '';
+
+            if (state.editingExam.questions.length === 0) {
+                container.innerHTML = `
+                    <div class="text-center py-12 bg-gray-50 rounded-lg border-2 border-dashed border-gray-200">
+                        <i class="fa-solid fa-circle-question mx-auto text-gray-400 mb-2 text-3xl"></i>
+                        <p class="text-gray-500">No questions added yet.</p>
+                        <p class="text-sm text-gray-400 mt-2">Upload a CSV file or add questions manually.</p>
+                        <p class="text-xs text-blue-500 mt-4 font-semibold">CSV Template format: Question, Option A, Option B, Option C, Option D, Correct(A/B/C/D)</p>
+                    </div>
+                `;
+                return;
+            }
+
+            state.editingExam.questions.forEach((q, qIndex) => {
+                const card = document.createElement('div');
+                card.className = "p-4 border rounded-lg bg-gray-50 relative group animate-fade-in";
+                card.innerHTML = `
+                    <button onclick="removeEditorQuestion(${qIndex})" class="absolute top-4 right-4 text-red-400 hover:text-red-600 transition-opacity">
+                        <i class="fa-solid fa-trash-can text-lg"></i>
+                    </button>
+                    <div class="flex flex-col gap-1 mb-4">
+                        <label class="text-sm font-semibold text-gray-700">Question ${qIndex + 1}</label>
+                        <input type="text" value="${escapeHtml(q.text)}" oninput="updateEditorQuestionText(${qIndex}, this.value)" class="border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        ${[0, 1, 2, 3].map(optIdx => `
+                            <div class="flex items-center gap-2">
+                                <input type="radio" name="correct-${q.id}" ${q.correctOption === optIdx ? 'checked' : ''} onchange="updateEditorQuestionCorrectOption(${qIndex}, ${optIdx})" class="w-5 h-5 text-blue-600">
+                                <input type="text" value="${escapeHtml(q.options[optIdx])}" oninput="updateEditorQuestionOption(${qIndex}, ${optIdx}, this.value)" placeholder="Option ${String.fromCharCode(65 + optIdx)}" class="flex-1 border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        // --- Editing Actions & Dynamic Inputs ---
+        function updateEditorQuestionText(qIndex, text) {
+            state.editingExam.questions[qIndex].text = text;
+        }
+
+        function updateEditorQuestionOption(qIndex, optIdx, text) {
+            state.editingExam.questions[qIndex].options[optIdx] = text;
+        }
+
+        function updateEditorQuestionCorrectOption(qIndex, optIdx) {
+            state.editingExam.questions[qIndex].correctOption = optIdx;
+        }
+
+        function removeEditorQuestion(qIndex) {
+            state.editingExam.questions.splice(qIndex, 1);
+            document.getElementById('editor-question-count').innerText = state.editingExam.questions.length;
+            renderEditorQuestions();
+        }
+
+        function addManualQuestion() {
+            state.editingExam.questions.push({
+                id: Date.now() + Math.random(),
+                text: '',
+                options: ['', '', '', ''],
+                correctOption: 0
+            });
+            document.getElementById('editor-question-count').innerText = state.editingExam.questions.length;
+            renderEditorQuestions();
+        }
+
+        // --- CSV Upload/Parser in Browser ---
+        function triggerCSVSelect() {
+            document.getElementById('csv-file-input').click();
+        }
+
+        function handleCSVUpload(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const text = event.target.result;
+                const rows = parseCSV(text);
+                const parsedQuestions = [];
+                let skippedHeader = false;
+
+                for (const row of rows) {
+                    if (row.length < 1) continue;
+                    
+                    // Header validation
+                    if (!skippedHeader && row[0].toLowerCase().includes('question')) {
+                        skippedHeader = true;
+                        continue;
+                    }
+                    
+                    if (row.length >= 6) {
+                        const q = row[0];
+                        const a = row[1];
+                        const b = row[2];
+                        const c = row[3];
+                        const d = row[4];
+                        const correctAns = row[5].toLowerCase().trim();
+                        
+                        const map = { 'a': 0, 'b': 1, 'c': 2, 'd': 3 };
+                        const correctIndex = map[correctAns];
+                        
+                        if (q && correctIndex !== undefined) {
+                            parsedQuestions.push({
+                                id: Date.now() + Math.random(),
+                                text: q,
+                                options: [a, b, c, d],
+                                correctOption: correctIndex
+                            });
+                        }
+                    }
+                }
+
+                if (parsedQuestions.length > 0) {
+                    state.editingExam.questions = [...state.editingExam.questions, ...parsedQuestions];
+                    document.getElementById('editor-question-count').innerText = state.editingExam.questions.length;
+                    renderEditorQuestions();
+                    showAlert("Upload Success", `Imported ${parsedQuestions.length} questions successfully.`, "success");
+                } else {
+                    showAlert("Upload Failed", "Could not parse questions. Please ensure CSV structure has headers: Question, Option A, Option B, Option C, Option D, Correct(A-D)", "error");
+                }
+            };
+            reader.readAsText(file);
+            e.target.value = ''; // reset element
+        }
+
+        // CSV String parser supporting quotes
+        function parseCSV(str) {
+            const result = [];
+            let row = [];
+            let inQuotes = false;
+            let val = '';
+            for (let i = 0; i < str.length; i++) {
+                let char = str[i];
+                if (inQuotes) {
+                    if (char === '"') {
+                        if (str[i + 1] === '"') { val += '"'; i++; }
+                        else { inQuotes = false; }
+                    } else { val += char; }
+                } else {
+                    if (char === '"') { inQuotes = true; }
+                    else if (char === ',') { row.push(val.trim()); val = ''; }
+                    else if (char === '\n' || char === '\r') {
+                        if (char === '\r' && str[i + 1] === '\n') i++;
+                        row.push(val.trim());
+                        if (row.some(c => c !== '')) result.push(row);
+                        row = []; val = '';
+                    } else { val += char; }
+                }
+            }
+            row.push(val.trim());
+            if (row.some(c => c !== '')) result.push(row);
+            return result;
+        }
+
+        // --- Save Completed Exam Assembly ---
+        function saveCreatedExam() {
+            // Pick values directly from Inputs
+            state.editingExam.subject = document.getElementById('edit-subject').value.trim();
+            state.editingExam.teacher = document.getElementById('edit-teacher').value.trim();
+            state.editingExam.duration = parseInt(document.getElementById('edit-duration').value) || 0;
+            state.editingExam.passingScore = parseInt(document.getElementById('edit-passing').value) || 0;
+            state.editingExam.referenceMaterial = document.getElementById('edit-reference').value.trim();
+
+            if (!state.editingExam.subject || !state.editingExam.teacher || state.editingExam.questions.length === 0) {
+                showAlert("Incomplete Data", "Please fill in all subject details and add at least one question.", "error");
+                return;
+            }
+
+            const existingIdx = state.exams.findIndex(e => e.id === state.editingExam.id);
+            if (existingIdx >= 0) {
+                state.exams[existingIdx] = state.editingExam;
+            } else {
+                state.exams.push(state.editingExam);
+            }
+
+            localStorage.setItem('retake_exams', JSON.stringify(state.exams));
+            state.editingExam = null;
+            navigateTo('teacher_admin');
+            showAlert("Success", "Exam has been saved successfully!", "success");
+        }
+
+        // --- Student Navigation & Operations ---
+        function handleStudentLogin(e) {
+            e.preventDefault();
+            const name = document.getElementById('stud-name').value.trim();
+            const sClass = document.getElementById('stud-class').value.trim();
+            const no = document.getElementById('stud-no').value.trim();
+
+            if (!name || !sClass || !no) {
+                showAlert("Required Info", "Please fully fill in all authentication details.", "error");
+                return;
+            }
+
+            state.currentStudent = { name, studentClass: sClass, classNo: no };
+            navigateTo('student_dashboard');
+        }
+
+        function exitStudentSession() {
+            state.currentStudent = null;
+            navigateTo('landing');
+        }
+
+        function renderStudentDashboardExams() {
+            const container = document.getElementById('student-exams-container');
+            container.innerHTML = '';
+
+            if (state.exams.length === 0) {
+                container.innerHTML = `
+                    <div class="col-span-full text-center py-12 bg-white rounded-xl shadow-sm border border-gray-100">
+                        <i class="fa-solid fa-circle-check text-gray-300 mb-4 text-4xl"></i>
+                        <p class="text-lg text-gray-600">No examinations are currently scheduled.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            state.exams.forEach(exam => {
+                const card = document.createElement('div');
+                card.className = "bg-white rounded-xl shadow-sm border border-gray-200 p-6 flex items-center justify-between hover:shadow-md transition-all group animate-fade-in flex-wrap gap-4";
+                card.innerHTML = `
+                    <div class="flex-1 min-w-[200px]">
+                        <h3 class="text-xl font-bold text-gray-800 mb-1">${escapeHtml(exam.subject)}</h3>
+                        <p class="text-sm text-gray-500 mb-3">Teacher: ${escapeHtml(exam.teacher)}</p>
+                        <div class="flex flex-wrap items-center gap-2 text-xs font-semibold text-blue-600 bg-blue-50 w-fit px-3 py-1 rounded-full">
+                            <span class="flex items-center gap-1"><i class="fa-solid fa-clock"></i> ${exam.duration} mins</span>
+                            <span>•</span>
+                            <span>${exam.questions.length} Questions</span>
+                            ${exam.referenceMaterial ? `
+                                <span>•</span>
+                                <span class="text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded flex items-center gap-1">
+                                    <i class="fa-solid fa-database"></i> Databank Included
+                                </span>
+                            ` : ''}
+                        </div>
+                    </div>
+                    <button onclick="startExam('${exam.id}')" class="px-6 py-3 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-semibold shadow-md hover:shadow-lg transition-all flex items-center gap-2 flex-shrink-0">
+                        Start Exam <i class="fa-solid fa-circle-chevron-right"></i>
+                    </button>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        function startExam(examId) {
+            const target = state.exams.find(e => e.id === examId);
+            if (!target) return;
+
+            state.activeExam = JSON.parse(JSON.stringify(target));
+            state.activeExam.answers = new Array(target.questions.length).fill(null);
+            navigateTo('exam_player');
+        }
+
+        // --- Active Countdown Timer ---
+        function startTimer() {
+            if (state.timerInterval) clearInterval(state.timerInterval);
+            state.timerInterval = setInterval(() => {
+                state.timeLeft--;
+                updateTimerDisplay();
+                if (state.timeLeft <= 0) {
+                    clearInterval(state.timerInterval);
+                    submitActiveExam();
+                }
+            }, 1000);
+        }
+
+        function updateTimerDisplay() {
+            const displayElements = document.querySelectorAll('.timer-text-display');
+            const m = Math.floor(state.timeLeft / 60);
+            const s = state.timeLeft % 60;
+            const timeString = `${m}:${s < 10 ? '0' : ''}${s}`;
+
+            displayElements.forEach(el => {
+                el.innerText = timeString;
+                // Add red alert on low time
+                if (state.timeLeft < 60) {
+                    el.parentElement.className = "flex items-center gap-2 px-4 py-2 rounded-full font-bold text-lg shadow-inner bg-red-100 text-red-600 animate-pulse";
+                } else {
+                    el.parentElement.className = "flex items-center gap-2 px-4 py-2 rounded-full font-bold text-lg shadow-inner bg-blue-100 text-blue-700";
+                }
+            });
+        }
+
+        // --- Exam Player Renderer ---
+        function renderExamPlayer() {
+            const container = document.getElementById('exam-player-layout-container');
+            container.innerHTML = '';
+
+            const hasRef = !!state.activeExam.referenceMaterial;
+
+            const q = state.activeExam.questions[state.currentIndex];
+            const isLast = state.currentIndex === state.activeExam.questions.length - 1;
+
+            // Generate central HTML card for the interactive question
+            const questionCardHtml = `
+                <div class="bg-white rounded-xl shadow-lg overflow-hidden border border-gray-100 flex flex-col h-full min-h-[500px]">
+                    <!-- Header -->
+                    <div class="bg-gray-50 border-b border-gray-200 p-4 flex justify-between items-center flex-wrap gap-4 flex-shrink-0">
+                        <div>
+                            <h2 class="text-xl font-bold text-gray-800">${escapeHtml(state.activeExam.subject)}</h2>
+                            <p class="text-sm text-gray-500">Question ${state.currentIndex + 1} of ${state.activeExam.questions.length}</p>
+                        </div>
+                        <div class="flex items-center gap-2 px-4 py-2 rounded-full font-bold text-lg shadow-inner bg-blue-100 text-blue-700">
+                            <i class="fa-solid fa-clock-rotate-left"></i> <span class="timer-text-display">--:--</span>
+                        </div>
+                    </div>
+
+                    <!-- Question & Answer Body -->
+                    <div class="p-6 md:p-8 overflow-y-auto flex-1">
+                        <h3 class="text-xl md:text-2xl font-medium text-gray-800 mb-6 leading-relaxed">
+                            ${state.currentIndex + 1}. ${escapeHtml(q.text)}
+                        </h3>
+                        
+                        <div class="space-y-3">
+                            ${[0, 1, 2, 3].map(idx => {
+                                const optText = q.options[idx];
+                                if (!optText) return '';
+                                const isSelected = state.activeExam.answers[state.currentIndex] === idx;
+                                return `
+                                    <button onclick="selectPlayerAnswer(${idx})" class="w-full text-left p-4 rounded-xl border-2 transition-all flex items-center gap-4 ${isSelected ? 'border-blue-600 bg-blue-50 text-blue-900 shadow-sm' : 'border-gray-200 hover:border-blue-300 hover:bg-gray-50 text-gray-700'}">
+                                        <div class="w-7 h-7 rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0 ${isSelected ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'}">
+                                            ${String.fromCharCode(65 + idx)}
+                                        </div>
+                                        <span class="text-base md:text-lg leading-snug">${escapeHtml(optText)}</span>
+                                    </button>
+                                `;
+                            }).join('')}
+                        </div>
+                    </div>
+
+                    <!-- Footer Controls -->
+                    <div class="bg-gray-50 border-t border-gray-200 p-4 flex justify-between items-center flex-shrink-0">
+                        <button onclick="prevQuestion()" ${state.currentIndex === 0 ? 'disabled' : ''} class="px-4 py-2 rounded-lg font-medium transition-all duration-200 flex items-center justify-center gap-2 bg-gray-200 text-gray-800 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed">
+                            <i class="fa-solid fa-chevron-left"></i> Previous
+                        </button>
+                        
+                        ${isLast ? `
+                            <button onclick="submitActiveExam()" class="px-8 py-2 rounded-lg font-medium transition-all duration-200 flex items-center justify-center gap-2 bg-green-600 text-white hover:bg-green-700 shadow-lg">
+                                Submit Exam <i class="fa-solid fa-circle-check"></i>
+                            </button>
+                        ` : `
+                            <button onclick="nextQuestion()" class="px-6 py-2 rounded-lg font-medium transition-all duration-200 flex items-center justify-center gap-2 bg-blue-600 text-white hover:bg-blue-700">
+                                Next <i class="fa-solid fa-chevron-right"></i>
+                            </button>
+                        `}
+                    </div>
+                </div>
+            `;
+
+            if (hasRef) {
+                // Side-by-side Layout (40% reference, 60% question card)
+                container.innerHTML = `
+                    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
+                        <!-- Left Panel: Reference / Databank -->
+                        <div class="lg:col-span-5 bg-white rounded-xl shadow-lg border border-gray-100 p-6 flex flex-col h-[80vh]">
+                            <div class="flex items-center gap-2 border-b pb-3 mb-4 text-blue-800">
+                                <i class="fa-solid fa-file-invoice text-blue-600 flex-shrink-0"></i>
+                                <h3 class="font-bold text-lg">Databank & Reference Material</h3>
+                            </div>
+                            <div class="flex-1 overflow-y-auto whitespace-pre-wrap text-gray-700 leading-relaxed font-sans pr-2 bg-slate-50 p-4 rounded-lg border border-slate-100 text-sm">
+                                ${escapeHtml(state.activeExam.referenceMaterial)}
+                            </div>
+                        </div>
+
+                        <!-- Right Panel: Core Question Controller -->
+                        <div class="lg:col-span-7 h-[80vh]">
+                            ${questionCardHtml}
+                        </div>
+                    </div>
+                `;
+            } else {
+                // Classic Centralized Frame layout
+                container.innerHTML = `
+                    <div class="max-w-3xl mx-auto h-[80vh]">
+                        ${questionCardHtml}
+                    </div>
+                `;
+            }
+            updateTimerDisplay();
+        }
+
+        // --- Active Game Loop Handlers ---
+        function selectPlayerAnswer(optionIdx) {
+            state.activeExam.answers[state.currentIndex] = optionIdx;
+            renderExamPlayer();
+        }
+
+        function prevQuestion() {
+            if (state.currentIndex > 0) {
+                state.currentIndex--;
+                renderExamPlayer();
+            }
+        }
+
+        function nextQuestion() {
+            if (state.currentIndex < state.activeExam.questions.length - 1) {
+                state.currentIndex++;
+                renderExamPlayer();
+            }
+        }
+
+        // --- Complete Exam Score Aggregation ---
+        function submitActiveExam() {
+            if (state.timerInterval) clearInterval(state.timerInterval);
+
+            let score = 0;
+            state.activeExam.questions.forEach((q, idx) => {
+                if (state.activeExam.answers[idx] === q.correctOption) score++;
+            });
+
+            const total = state.activeExam.questions.length;
+            const percentage = (score / total) * 100;
+            const passed = percentage >= state.activeExam.passingScore;
+
+            const resultObj = {
+                studentName: state.currentStudent.name,
+                studentClass: state.currentStudent.studentClass,
+                classNo: state.currentStudent.classNo,
+                subject: state.activeExam.subject,
+                score: score,
+                total: total,
+                percentage: percentage,
+                passed: passed,
+                warnings: state.cheatWarnings,
+                timestamp: Date.now()
+            };
+
+            // 1. Save Locally
+            state.results.push(resultObj);
+            localStorage.setItem('retake_results', JSON.stringify(state.results));
+
+            // 2. Export Live to Webhook
+            if (state.webhookUrl) {
+                fetch(state.webhookUrl, {
+                    method: 'POST',
+                    mode: 'no-cors',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(resultObj)
+                }).catch(err => {
+                    console.error("Failed to automatically synchronize with Google Sheet live webhook", err);
+                });
+            }
+
+            // 3. Render Dashboard Summary
+            renderExamResult(resultObj);
+        }
+
+        function renderExamResult(result) {
+            const badgeContainer = document.getElementById('result-badge-container');
+            const header = document.getElementById('result-header');
+
+            if (result.passed) {
+                badgeContainer.innerHTML = `<div class="bg-green-100 w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6 text-green-600 shadow-inner"><i class="fa-solid fa-circle-check text-5xl"></i></div>`;
+                header.innerText = "Congratulations!";
+            } else {
+                badgeContainer.innerHTML = `<div class="bg-red-100 w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6 text-red-600 shadow-inner"><i class="fa-solid fa-circle-xmark text-5xl"></i></div>`;
+                header.innerText = "Exam Completed";
+            }
+
+            document.getElementById('res-subject').innerText = result.subject;
+            document.getElementById('res-score').innerText = `${result.score} / ${result.total}`;
+            document.getElementById('res-percentage').innerText = `${Math.round(result.percentage)}%`;
+            document.getElementById('res-status').innerText = result.passed ? "PASSED" : "FAILED";
+            document.getElementById('res-status').className = `font-bold ${result.passed ? 'text-green-600' : 'text-red-600'}`;
+
+            navigateTo('exam_result');
+        }
+
+        // --- Teacher Results & File Exporter ---
+        function renderResults() {
+            const body = document.getElementById('results-table-body');
+            body.innerHTML = '';
+
+            if (state.results.length === 0) {
+                body.innerHTML = `
+                    <tr>
+                        <td colspan="6" class="p-8 text-center text-gray-400 font-medium">No student results recorded yet.</td>
+                    </tr>
+                `;
+                return;
+            }
+
+            // Sort results by date descending
+            const sorted = [...state.results].sort((a,b) => b.timestamp - a.timestamp);
+
+            sorted.forEach(r => {
+                const tr = document.createElement('tr');
+                tr.className = "border-b border-gray-100 hover:bg-gray-50 transition-colors";
+                tr.innerHTML = `
+                    <td class="p-3 text-sm text-gray-500">${new Date(r.timestamp).toLocaleDateString()}</td>
+                    <td class="p-3 font-medium text-gray-800">${escapeHtml(r.studentName)}</td>
+                    <td class="p-3 text-gray-600">${escapeHtml(r.studentClass)} (${escapeHtml(r.classNo)})</td>
+                    <td class="p-3 text-gray-600">${escapeHtml(r.subject)}</td>
+                    <td class="p-3 font-bold text-blue-600">${r.score} / ${r.total}</td>
+                    <td class="p-3">
+                        <span class="px-2.5 py-1 rounded text-xs font-bold ${r.passed ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">
+                            ${r.passed ? 'PASS' : 'FAIL'}
+                        </span>
+                    </td>
+                `;
+                body.appendChild(tr);
+            });
+        }
+
+        function exportResultsCSV() {
+            if (state.results.length === 0) {
+                showAlert("No Data", "There are no student results available to export yet.", "info");
+                return;
+            }
+
+            const headers = ["Date", "Student Name", "Class", "Class Number", "Subject", "Score", "Percentage", "Result Status", "Cheat Warnings"];
+            const csvRows = [headers.join(",")];
+
+            state.results.forEach(r => {
+                const row = [
+                    `"${new Date(r.timestamp).toLocaleString()}"`,
+                    `"${r.studentName.replace(/"/g, '""')}"`,
+                    `"${r.studentClass.replace(/"/g, '""')}"`,
+                    `"${r.classNo}"`,
+                    `"${r.subject.replace(/"/g, '""')}"`,
+                    `"${r.score} / ${r.total}"`,
+                    `"${Math.round(r.percentage)}%"`,
+                    `"${r.passed ? 'PASS' : 'FAIL'}"`,
+                    `"${r.warnings}"`
+                ];
+                csvRows.push(row.join(","));
+            });
+
+            const blob = new Blob([csvRows.join("\n")], { type: 'text/csv;charset=utf-8;' });
+            const url = window.URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.setAttribute('href', url);
+            link.setAttribute('download', `Retake_Results_${new Date().toLocaleDateString().replace(/\//g, '-')}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        // --- HTML Utility sanitization to prevent XSS injection ---
+        function escapeHtml(text) {
+            if (!text) return '';
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            return text.toString().replace(/[&<>"']/g, function(m) { return map[m]; });
+        }
+    </script>
+</body>
+</html>
