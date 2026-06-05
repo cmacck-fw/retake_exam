@@ -1,0 +1,2066 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Retake Exam Platform / 統一補考系統</title>
+    <!-- Tailwind CSS Play CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Firebase SDKs (v11) via CDNs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc, collection, getDocs, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // ====================================================================
+        // STEP 1: PASTE YOUR GOOGLE FIREBASE CONFIGURATION HERE
+        // ====================================================================
+const firebaseConfig = {
+  apiKey: "AIzaSyAU_IyyHXHTe5tIUzkPPXMbNhC1GLgTqyQ",
+  authDomain: "retake-exam-5bfc6.firebaseapp.com",
+  projectId: "retake-exam-5bfc6",
+  storageBucket: "retake-exam-5bfc6.firebasestorage.app",
+  messagingSenderId: "887329359418",
+  appId: "1:887329359418:web:c2b668075eef2d723a5703",
+  measurementId: "G-4Z675B6QK2"
+};
+        // ====================================================================
+
+        const actualConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : firebaseConfig;
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'hk-retake-portal';
+
+        // Initialize Firebase safely
+        let app, auth, db;
+        let isFirebaseConnected = false;
+
+        const EXAMS_COLLECTION_PATH = ['artifacts', appId, 'public', 'data', 'exams'];
+        const RESULTS_COLLECTION_PATH = ['artifacts', appId, 'public', 'data', 'results'];
+        const REGISTRY_COLLECTION_PATH = ['artifacts', appId, 'public', 'data', 'registry'];
+        const SETTINGS_DOC_PATH = ['artifacts', appId, 'public', 'data', 'settings', 'config'];
+
+        // Global Application State
+        window.state = {
+            view: 'landing',
+            exams: [],
+            results: [],
+            registry: [], 
+            webhookUrl: '',
+            currentStudent: null,
+            activeExam: null,
+            currentIndex: 0,
+            timeLeft: 0,
+            cheatWarnings: 0,
+            timerInterval: null,
+            editingExam: null,
+            user: null,
+            language: 'en' 
+        };
+
+        async function authenticateUser() {
+            // Check if firebase Config is provided
+            if (!actualConfig.apiKey) {
+                console.warn("Firebase config is empty. Operating in fully functional local offline mode.");
+                loadConfigurationFromLocalStorage();
+                return;
+            }
+            try {
+                showLoadingSpinner(true, t("syncing_db"));
+                app = initializeApp(actualConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+                
+                onAuthStateChanged(auth, async (currUser) => {
+                    if (currUser) {
+                        window.state.user = currUser;
+                        isFirebaseConnected = true;
+                        await syncExamsFromCloud();
+                        await syncResultsFromCloud();
+                        await syncRegistryFromCloud();
+                        await syncSettingsFromCloud();
+                        showLoadingSpinner(false);
+                    } else {
+                        window.state.user = null;
+                        isFirebaseConnected = false;
+                        loadConfigurationFromLocalStorage();
+                    }
+                });
+
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (err) {
+                console.error("Firebase authentication error:", err);
+                showLoadingSpinner(false);
+                isFirebaseConnected = false;
+                loadConfigurationFromLocalStorage();
+                showAlert(t("db_error_title"), t("db_error_desc"), "error");
+            }
+        }
+
+        // --- Core Data Sync with Firestore ---
+        async function syncExamsFromCloud() {
+            if (!isFirebaseConnected) return;
+            try {
+                const examsCol = collection(db, ...EXAMS_COLLECTION_PATH);
+                const querySnapshot = await getDocs(examsCol);
+                const fetchedExams = [];
+                querySnapshot.forEach((docSnap) => {
+                    fetchedExams.push({ id: docSnap.id, ...docSnap.data() });
+                });
+                window.state.exams = fetchedExams;
+                renderExams();
+            } catch (e) {
+                console.error("Error reading exams: ", e);
+            }
+        }
+        window.syncExamsFromCloud = syncExamsFromCloud;
+
+        async function syncResultsFromCloud() {
+            if (!isFirebaseConnected) return;
+            try {
+                const resultsCol = collection(db, ...RESULTS_COLLECTION_PATH);
+                const querySnapshot = await getDocs(resultsCol);
+                const fetchedResults = [];
+                querySnapshot.forEach((docSnap) => {
+                    fetchedResults.push(docSnap.data());
+                });
+                window.state.results = fetchedResults;
+                renderResults();
+            } catch (e) {
+                console.error("Error reading results: ", e);
+            }
+        }
+
+        async function syncRegistryFromCloud() {
+            if (!isFirebaseConnected) return;
+            try {
+                const registryCol = collection(db, ...REGISTRY_COLLECTION_PATH);
+                const querySnapshot = await getDocs(registryCol);
+                const fetchedRegistry = [];
+                querySnapshot.forEach((docSnap) => {
+                    fetchedRegistry.push({ id: docSnap.id, ...docSnap.data() });
+                });
+                window.state.registry = fetchedRegistry;
+                renderRegistryTable();
+            } catch (e) {
+                console.error("Error reading registry: ", e);
+            }
+        }
+        window.syncRegistryFromCloud = syncRegistryFromCloud;
+
+        async function syncSettingsFromCloud() {
+            if (!isFirebaseConnected) return;
+            try {
+                const settingsDocRef = doc(db, ...SETTINGS_DOC_PATH);
+                const docSnap = await getDoc(settingsDocRef);
+                if (docSnap.exists()) {
+                    window.state.webhookUrl = docSnap.data().webhookUrl || '';
+                } else {
+                    window.state.webhookUrl = '';
+                }
+                const input = document.getElementById('webhook-url-input');
+                if (input) {
+                    input.value = window.state.webhookUrl;
+                }
+                updateSyncStatus();
+            } catch (e) {
+                console.error("Error reading settings: ", e);
+            }
+        }
+
+        window.saveExamToCloud = async function(examObj) {
+            if (!isFirebaseConnected) {
+                // Save locally
+                const existingIndex = window.state.exams.findIndex(e => e.id === examObj.id);
+                if (existingIndex > -1) {
+                    window.state.exams[existingIndex] = examObj;
+                } else {
+                    window.state.exams.push(examObj);
+                }
+                localStorage.setItem('retake_exams', JSON.stringify(window.state.exams));
+                renderExams();
+                showAlert(t("success"), t("exam_uploaded"), "success");
+                return;
+            }
+            try {
+                showLoadingSpinner(true, t("uploading_exam"));
+                const examDocRef = doc(db, ...EXAMS_COLLECTION_PATH, examObj.id);
+                await setDoc(examDocRef, examObj);
+                await syncExamsFromCloud();
+                showLoadingSpinner(false);
+                showAlert(t("success"), t("exam_uploaded"), "success");
+            } catch (err) {
+                showLoadingSpinner(false);
+                console.error("Failed to write to Firestore: ", err);
+                showAlert(t("cloud_error_title"), t("cloud_error_desc"), "error");
+            }
+        }
+
+        window.deleteExamFromCloud = async function(examId) {
+            if (!isFirebaseConnected) {
+                window.state.exams = window.state.exams.filter(e => e.id !== examId);
+                localStorage.setItem('retake_exams', JSON.stringify(window.state.exams));
+                renderExams();
+                showAlert(t("deleted_title"), t("deleted_desc"), "success");
+                return;
+            }
+            try {
+                showLoadingSpinner(true, t("deleting"));
+                const examDocRef = doc(db, ...EXAMS_COLLECTION_PATH, examId);
+                await deleteDoc(examDocRef);
+                await syncExamsFromCloud();
+                showLoadingSpinner(false);
+                showAlert(t("deleted_title"), t("deleted_desc"), "success");
+            } catch (err) {
+                showLoadingSpinner(false);
+                console.error("Error deleting: ", err);
+            }
+        }
+
+        window.saveResultToCloud = async function(resultObj) {
+            if (!isFirebaseConnected) {
+                window.state.results.push(resultObj);
+                localStorage.setItem('retake_results', JSON.stringify(window.state.results));
+                renderResults();
+                return;
+            }
+            try {
+                const resultDocId = `${resultObj.timestamp}_${resultObj.classNo}`;
+                const resultDocRef = doc(db, ...RESULTS_COLLECTION_PATH, resultDocId);
+                await setDoc(resultDocRef, resultObj);
+                await syncResultsFromCloud();
+            } catch (err) {
+                console.error("Error uploading student result: ", err);
+            }
+        }
+
+        window.saveWebhookUrlToCloud = async function(url) {
+            if (!isFirebaseConnected) {
+                window.state.webhookUrl = url;
+                localStorage.setItem('retake_webhook_url', url);
+                showAlert(t("success"), t("webhook_saved"), "success");
+                return;
+            }
+            try {
+                showLoadingSpinner(true, t("saving_settings"));
+                const settingsDocRef = doc(db, ...SETTINGS_DOC_PATH);
+                await setDoc(settingsDocRef, { webhookUrl: url }, { merge: true });
+                window.state.webhookUrl = url;
+                showLoadingSpinner(false);
+                showAlert(t("success"), t("webhook_saved"), "success");
+            } catch (err) {
+                showLoadingSpinner(false);
+                console.error("Failed to save settings: ", err);
+                showAlert(t("error"), t("webhook_save_failed"), "error");
+            }
+        }
+
+        window.uploadRegistryToCloud = async function(studentList) {
+            if (!isFirebaseConnected) {
+                window.state.registry = studentList;
+                localStorage.setItem('retake_registry', JSON.stringify(studentList));
+                renderRegistryTable();
+                showAlert(t("success"), t("registry_uploaded_success", { count: studentList.length }), "success");
+                return;
+            }
+            try {
+                showLoadingSpinner(true, t("saving_registry"));
+                const registryCol = collection(db, ...REGISTRY_COLLECTION_PATH);
+                const currentSnapshot = await getDocs(registryCol);
+                const deletePromises = [];
+                currentSnapshot.forEach((docSnap) => {
+                    deletePromises.push(deleteDoc(doc(db, ...REGISTRY_COLLECTION_PATH, docSnap.id)));
+                });
+                await Promise.all(deletePromises);
+
+                const uploadPromises = studentList.map((stud, idx) => {
+                    const docId = `student_${idx}_${Date.now()}`;
+                    const docRef = doc(db, ...REGISTRY_COLLECTION_PATH, docId);
+                    return setDoc(docRef, stud);
+                });
+                await Promise.all(uploadPromises);
+                
+                await syncRegistryFromCloud();
+                showLoadingSpinner(false);
+                showAlert(t("success"), t("registry_uploaded_success", { count: studentList.length }), "success");
+            } catch (e) {
+                showLoadingSpinner(false);
+                console.error("Error uploading registry: ", e);
+                showAlert(t("error"), t("registry_upload_failed"), "error");
+            }
+        }
+
+        window.clearRegistryFromCloud = async function() {
+            if (!isFirebaseConnected) {
+                window.state.registry = [];
+                localStorage.removeItem('retake_registry');
+                renderRegistryTable();
+                showAlert(t("success"), t("registry_cleared_msg"), "success");
+                return;
+            }
+            try {
+                showLoadingSpinner(true, t("clearing_registry"));
+                const registryCol = collection(db, ...REGISTRY_COLLECTION_PATH);
+                const currentSnapshot = await getDocs(registryCol);
+                const deletePromises = [];
+                currentSnapshot.forEach((docSnap) => {
+                    deletePromises.push(deleteDoc(doc(db, ...REGISTRY_COLLECTION_PATH, docSnap.id)));
+                });
+                await Promise.all(deletePromises);
+                await syncRegistryFromCloud();
+                showLoadingSpinner(false);
+                showAlert(t("success"), t("registry_cleared_msg"), "success");
+            } catch (e) {
+                showLoadingSpinner(false);
+                console.error("Error clearing registry: ", e);
+            }
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            authenticateUser();
+            
+            window.addEventListener('blur', () => {
+                if (window.state.view === 'exam_player') {
+                    window.state.cheatWarnings += 1;
+                    showAlert(t("warning_title"), t("cheat_warning"), "error");
+                }
+            });
+        });
+    </script>
+    <style>
+        .animate-fade-in {
+            animation: fadeIn 0.4s ease-out forwards;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="bg-slate-50 min-h-screen font-sans text-gray-900 antialiased p-4 md:p-8 flex flex-col justify-between">
+
+    <!-- Loading Spinner Overlay -->
+    <div id="loading-overlay" class="fixed inset-0 bg-black/40 backdrop-blur-xs z-50 flex items-center justify-center flex-col gap-4 hidden animate-fade-in">
+        <div class="w-16 h-16 border-4 border-t-blue-600 border-blue-200 rounded-full animate-spin"></div>
+        <p id="loading-text" class="text-white text-lg font-bold drop-shadow-md">Syncing Database...</p>
+    </div>
+
+    <!-- ==================== GLOBAL CUSTOM ALERT MODAL ==================== -->
+    <div id="alert-modal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm hidden">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="flex justify-between items-center p-4 border-b">
+                <h2 id="alert-title" class="text-xl font-bold text-gray-800">Alert</h2>
+                <button onclick="closeAlert()" class="text-gray-500 hover:text-gray-800">
+                    <i class="fa-solid fa-circle-xmark text-2xl"></i>
+                </button>
+            </div>
+            <div class="p-4 overflow-y-auto">
+                <div id="alert-content-box" class="p-4 rounded-lg flex items-start gap-4">
+                    <span id="alert-icon" class="mt-1 flex-shrink-0 text-2xl"></span>
+                    <p id="alert-message" class="font-medium"></p>
+                </div>
+                <div class="mt-6 flex justify-end">
+                    <button id="alert-btn" onclick="closeAlert()" class="px-6 py-2 rounded-lg font-medium bg-blue-600 text-white hover:bg-blue-700 transition-all duration-200">
+                        Understood
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- UTILITIES HEADER BAR (LANGUAGE TOGGLE) -->
+    <div class="w-full max-w-7xl mx-auto flex justify-end mb-4 gap-2 items-center">
+        <button onclick="setLanguage('en')" id="lang-btn-en" class="px-3.5 py-1.5 rounded-lg text-xs md:text-sm font-semibold border transition-all bg-blue-600 text-white shadow-sm flex items-center gap-1.5">
+            🇬🇧 English
+        </button>
+        <button onclick="setLanguage('zh')" id="lang-btn-zh" class="px-3.5 py-1.5 rounded-lg text-xs md:text-sm font-semibold border transition-all bg-white text-gray-700 shadow-sm flex items-center gap-1.5">
+            🇭🇰 繁體中文
+        </button>
+    </div>
+
+    <!-- ==================== PORTAL VIEWS WRAPPER ==================== -->
+    <div id="app-container" class="max-w-7xl mx-auto w-full flex-grow">
+
+        <!-- --- VIEW 1: LANDING PAGE --- -->
+        <section id="view-landing" class="max-w-4xl mx-auto mt-12 text-center animate-fade-in">
+            <div class="inline-flex items-center justify-center p-4 bg-blue-100 text-blue-700 rounded-2xl mb-6 shadow-sm animate-bounce">
+                <i class="fa-solid fa-cloud-arrow-up text-4xl"></i>
+            </div>
+            <h1 data-t="title" class="text-4xl md:text-5xl font-extrabold text-gray-900 mb-6 tracking-tight">Retake Exam Platform</h1>
+            <p data-t="subtitle" class="text-xl text-gray-500 mb-12 max-w-2xl mx-auto">Create exams on any teacher computer and host them live instantly for students throughout the school network.</p>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-2xl mx-auto">
+                <div onclick="navigateTo('student_login')" class="bg-white p-8 rounded-2xl shadow-md hover:shadow-xl transition-all cursor-pointer border border-transparent hover:border-blue-500 group">
+                    <i class="fa-solid fa-user-graduate text-4xl text-blue-500 mb-4 group-hover:scale-110 transition-transform"></i>
+                    <h2 data-t="student_access" class="text-2xl font-bold mb-2">Student Access</h2>
+                    <p data-t="student_desc" class="text-gray-500">Login to take your assigned retake examinations.</p>
+                </div>
+                
+                <div onclick="navigateTo('teacher_login')" class="bg-white p-8 rounded-2xl shadow-md hover:shadow-xl transition-all cursor-pointer border border-transparent hover:border-indigo-500 group">
+                    <i class="fa-solid fa-chalkboard-user text-4xl text-indigo-500 mb-4 group-hover:scale-110 transition-transform"></i>
+                    <h2 data-t="teacher_admin" class="text-2xl font-bold mb-2">Teacher Admin</h2>
+                    <p data-t="teacher_desc" class="text-gray-500">Manage exams, upload questions, and configure live export.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- --- VIEW 2: TEACHER LOGIN --- -->
+        <section id="view-teacher_login" class="max-w-md mx-auto mt-20 bg-white p-8 rounded-2xl shadow-xl animate-fade-in hidden">
+            <div class="text-center mb-8">
+                <i class="fa-solid fa-lock text-4xl text-indigo-600 mb-4"></i>
+                <h2 data-t="teacher_auth" class="text-2xl font-bold text-gray-800">Teacher Authentication</h2>
+                <p data-t="enter_pin" class="text-gray-500">Enter Admin PIN to manage exams</p>
+            </div>
+            <form onsubmit="handleTeacherLogin(event)" class="space-y-6">
+                <div class="flex flex-col gap-1">
+                    <label class="text-sm font-semibold text-gray-700"><span data-t="admin_pin">Admin PIN</span> <span class="text-red-500">*</span></label>
+                    <input id="teacher-pin" type="password" required placeholder="••••" class="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
+                </div>
+                <button type="submit" data-t="access_dashboard" class="w-full py-3 rounded-lg font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-all duration-200 text-lg">Access Dashboard</button>
+            </form>
+            <button onclick="navigateTo('landing')" data-t="cancel" class="w-full text-center mt-6 text-sm text-gray-400 hover:text-gray-600">Cancel</button>
+        </section>
+
+        <!-- --- VIEW 3: TEACHER ADMIN --- -->
+        <section id="view-teacher_admin" class="max-w-6xl mx-auto animate-fade-in pb-12 hidden">
+            <!-- Header -->
+            <div class="flex justify-between items-center mb-8 flex-wrap gap-4">
+                <div>
+                    <h1 data-t="teacher_dashboard" class="text-3xl font-bold text-gray-800">Teacher Dashboard</h1>
+                    <p data-t="live_connected" class="text-gray-500">Live internet sync connected. Configure examinations below.</p>
+                </div>
+                <button onclick="navigateTo('landing')" class="border-2 border-red-500 text-red-500 hover:bg-red-50 px-4 py-2 rounded-lg font-medium transition-all flex items-center gap-2">
+                    <i class="fa-solid fa-right-from-bracket"></i> <span data-t="logout">Logout</span>
+                </button>
+            </div>
+
+            <!-- Tab Headers -->
+            <div class="flex gap-4 mb-8 border-b pb-4 overflow-x-auto no-scrollbar">
+                <button onclick="switchTeacherTab('exams')" id="tab-exams-btn" class="px-4 py-2 font-semibold rounded-lg transition-colors bg-blue-100 text-blue-700 whitespace-nowrap">
+                    <span data-t="tab_exams">Manage Exams (Live)</span>
+                </button>
+                <button onclick="switchTeacherTab('results')" id="tab-results-btn" class="px-4 py-2 font-semibold rounded-lg transition-colors text-gray-500 hover:bg-gray-100 whitespace-nowrap">
+                    <span data-t="tab_results">Student Results (Live)</span>
+                </button>
+                <button onclick="switchTeacherTab('registry')" id="tab-registry-btn" class="px-4 py-2 font-semibold rounded-lg transition-colors text-gray-500 hover:bg-gray-100 whitespace-nowrap flex items-center gap-1.5">
+                    <i class="fa-solid fa-users"></i> <span data-t="tab_registry">Student Registry</span>
+                </button>
+                <button onclick="switchTeacherTab('settings')" id="tab-settings-btn" class="px-4 py-2 font-semibold rounded-lg transition-colors flex items-center gap-1.5 text-gray-500 hover:bg-gray-100 whitespace-nowrap">
+                    <i class="fa-solid fa-gears"></i> <span data-t="tab_integration">Live Sheet Integration</span>
+                </button>
+            </div>
+
+            <!-- TAB 1: MANAGE EXAMS -->
+            <div id="tab-exams" class="space-y-6">
+                <div class="flex justify-between items-center mb-6 flex-wrap gap-4">
+                    <h2 data-t="active_exams" class="text-xl font-bold text-gray-700">Active Exams (Cloud Synced)</h2>
+                    <button onclick="openExamCreator()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-all flex items-center gap-2">
+                        <i class="fa-solid fa-plus"></i> <span data-t="create_exam">Create New Exam</span>
+                    </button>
+                </div>
+                <div id="exams-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <!-- Dynamic Exam Cards -->
+                </div>
+            </div>
+
+            <!-- TAB 2: STUDENT RESULTS -->
+            <div id="tab-results" class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 hidden">
+                <div class="flex justify-between items-center mb-6 flex-wrap gap-4">
+                    <h2 data-t="exam_records" class="text-xl font-bold text-gray-700">Exam Records</h2>
+                    <button onclick="exportResultsCSV()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-medium transition-all flex items-center gap-2">
+                        <i class="fa-solid fa-download"></i> <span data-t="export_csv">Export Manual CSV</span>
+                    </button>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="bg-gray-50 border-b border-gray-200 text-gray-600 text-sm">
+                                <th class="p-3" data-t="th_date">Date</th>
+                                <th class="p-3" data-t="th_student">Student</th>
+                                <th class="p-3" data-t="th_class">Class (No.)</th>
+                                <th class="p-3" data-t="th_subject">Subject</th>
+                                <th class="p-3" data-t="th_score">Score</th>
+                                <th class="p-3" data-t="th_status">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="results-table-body">
+                            <!-- Dynamic Results rows -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- TAB 3: MASTER STUDENT REGISTRY -->
+            <div id="tab-registry" class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 hidden">
+                <div class="flex justify-between items-center mb-4 flex-wrap gap-4">
+                    <div>
+                        <h2 data-t="registry_title" class="text-xl font-bold text-gray-800">Master Student Retake Registry</h2>
+                        <p data-t="registry_desc" class="text-gray-500 text-sm">Upload your school's master retake excel sheet. This will override individual exam filters.</p>
+                    </div>
+                    <div class="flex gap-2 flex-wrap sm:flex-nowrap">
+                        <input type="file" id="registry-csv-input" accept=".csv" onchange="handleRegistryCSVUpload(event)" class="hidden">
+                        <button onclick="triggerRegistryCSVSelect()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-all flex items-center gap-2">
+                            <i class="fa-solid fa-cloud-arrow-up"></i> <span data-t="upload_registry_btn">Upload Registry CSV</span>
+                        </button>
+                        <button onclick="loadSampleRegistryFile()" class="border-2 border-indigo-500 text-indigo-500 hover:bg-indigo-50 px-4 py-2 rounded-lg font-medium transition-all flex items-center gap-2">
+                            <i class="fa-solid fa-flask"></i> <span>Load Sample File</span>
+                        </button>
+                        <button onclick="clearRegistry()" class="border-2 border-red-500 text-red-500 hover:bg-red-50 px-4 py-2 rounded-lg font-medium transition-all flex items-center gap-2">
+                            <i class="fa-solid fa-trash"></i> <span data-t="clear_registry_btn">Clear Registry</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="bg-blue-50 border border-blue-200 text-blue-800 p-4 rounded-xl text-sm mb-6">
+                    <p class="font-bold flex items-center gap-1.5"><i class="fa-solid fa-info-circle"></i> <span data-t="csv_guidelines">Required Google Sheet Column Format:</span></p>
+                    <p data-t="csv_columns_needed" class="mt-1 font-sans">The spreadsheet parser dynamically maps columns matching <strong>Class</strong> (班別), <strong>Class Number</strong> (座號), and <strong>Student Name</strong> (姓名) perfectly. Any other columns are read as custom subjects assigned with a <strong>'TRUE'</strong> value.</p>
+                </div>
+
+                <div class="overflow-x-auto max-h-[500px]">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="bg-gray-50 border-b border-gray-200 text-gray-600 text-sm">
+                                <th class="p-3" data-t="th_class">Class</th>
+                                <th class="p-3" data-t="th_class_no">No.</th>
+                                <th class="p-3" data-t="th_student">Student Name</th>
+                                <th class="p-3" data-t="th_subject">Assigned Subject</th>
+                            </tr>
+                        </thead>
+                        <tbody id="registry-table-body">
+                            <!-- Dynamic Registry database rows -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- TAB 4: LIVE SHEET INTEGRATION -->
+            <div id="tab-settings" class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 max-w-4xl hidden">
+                <h2 data-t="sheets_integration" class="text-xl font-bold text-gray-800 mb-2">Google Sheets Live Integration</h2>
+                <p data-t="integration_desc" class="text-gray-500 text-sm mb-6">Connect your portal directly to a target Google Sheet spreadsheet to record student submissions instantly.</p>
+                
+                <div class="space-y-4 mb-8">
+                    <div class="flex flex-col gap-1">
+                        <label data-t="webhook_url_label" class="text-sm font-semibold text-gray-700">Google Web App URL (Deployment Webhook)</label>
+                        <div class="flex gap-2 flex-wrap sm:flex-nowrap">
+                            <input id="webhook-url-input" type="text" placeholder="https://script.google.com/macros/s/.../exec" class="flex-1 border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none min-w-[260px]">
+                            <button onclick="saveWebhookUrl()" class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg font-semibold transition-all whitespace-nowrap w-full sm:w-auto">
+                                <span data-t="save_sync_url">Save Sync URL</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div id="sync-status-active" class="flex items-center gap-2 text-green-700 bg-green-50 p-3 rounded-lg border border-green-100 text-sm font-semibold hidden">
+                        <i class="fa-solid fa-circle-check text-lg"></i> <span data-t="sync_active">Live sync is active! Student results will be exported live.</span>
+                    </div>
+                    <div id="sync-status-inactive" class="flex items-center gap-2 text-amber-700 bg-amber-50 p-3 rounded-lg border border-amber-100 text-sm hidden">
+                        <i class="fa-solid fa-circle-exclamation text-lg flex-shrink-0"></i> <span data-t="sync_inactive">No URL provided. Student scores will be saved in the offline browser storage only.</span>
+                    </div>
+                </div>
+
+                <div class="border-t pt-6">
+                    <h3 data-t="guide_title" class="font-bold text-gray-700 mb-3 text-sm uppercase tracking-wide">Quick Guide to setting up your Google Sheet:</h3>
+                    <ol class="list-decimal list-inside text-sm text-gray-600 space-y-2.5">
+                        <li data-t="guide_1">Create a blank Google Sheet.</li>
+                        <li data-t="guide_2">Go to Extensions -> Apps Script.</li>
+                        <li data-t="guide_3">Paste the Google Apps Script Webhook handler code.</li>
+                        <li data-t="guide_4">Click Deploy -> New deployment -> Web app.</li>
+                        <li data-t="guide_5">Set access to "Anyone", deploy, and copy the Web App URL into the box above.</li>
+                    </ol>
+                </div>
+            </div>
+        </section>
+
+        <!-- --- VIEW 4: CREATING/EDITING EXAM --- -->
+        <section id="view-exam_editor" class="max-w-4xl mx-auto pb-12 hidden">
+            <button onclick="closeExamEditor()" class="flex items-center text-blue-600 mb-6 hover:underline font-medium gap-2">
+                <i class="fa-solid fa-chevron-left"></i> <span data-t="back_to_exams">Back to Exams</span>
+            </button>
+            
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6">
+                <h2 data-t="exam_details" class="text-2xl font-bold mb-6 text-gray-800">Exam Details</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="flex flex-col gap-1">
+                        <label class="text-sm font-semibold text-gray-700"><span data-t="subject_name">Subject Name</span> <span class="text-red-500">*</span></label>
+                        <input id="edit-subject" type="text" placeholder="e.g. Mathematics Sec 2" class="border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div class="flex flex-col gap-1">
+                        <label class="text-sm font-semibold text-gray-700"><span data-t="subject_teacher">Subject Teacher</span> <span class="text-red-500">*</span></label>
+                        <input id="edit-teacher" type="text" placeholder="e.g. Mr. Chan" class="border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div class="flex flex-col gap-1">
+                        <label class="text-sm font-semibold text-gray-700"><span data-t="exam_duration">Duration (Minutes)</span> <span class="text-red-500">*</span></label>
+                        <input id="edit-duration" type="number" value="30" class="border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div class="flex flex-col gap-1">
+                        <label class="text-sm font-semibold text-gray-700"><span data-t="passing_score">Passing Score (%)</span> <span class="text-red-500">*</span></label>
+                        <input id="edit-passing" type="number" value="50" class="border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                </div>
+
+                <!-- Assignment Section (Student Filter) -->
+                <div class="mt-6 border-t pt-4">
+                    <label class="text-sm font-semibold text-gray-700 flex items-center gap-1.5 mb-1">
+                        <i class="fa-solid fa-users text-blue-600"></i> <span data-t="assigned_candidates_label">Assigned Students (Target Candidates)</span>
+                    </label>
+                    <p data-t="assigned_candidates_hint" class="text-xs text-gray-400 mb-2">Leave blank for all students. Or list targets separated by commas (e.g., '3A' to assign all of class 3A, '3A-15' for class 3A seat 15, or 'Chan Tai Man' for specific names).</p>
+                    <input id="edit-assigned" type="text" placeholder="e.g. 3A, 3B-12, Chan Tai Man" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 font-sans">
+                </div>
+
+                <div class="mt-6 border-t pt-4">
+                    <label class="text-sm font-semibold text-gray-700 flex items-center gap-1.5 mb-1">
+                        <i class="fa-solid fa-file-invoice text-blue-600"></i> <span data-t="databank_label">Databank / Reference Material (Optional)</span>
+                    </label>
+                    <p data-t="databank_hint" class="text-xs text-gray-400 mb-2">If you have reference tables, passages, formulas, or maps, enter them here. Students will see this on the left-hand side of their screens during the examination.</p>
+                    <textarea id="edit-reference" placeholder="Paste reference data, booklets, or texts here..." class="w-full h-32 border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 font-sans"></textarea>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                <div class="flex justify-between items-center mb-6 flex-wrap gap-4">
+                    <h2 class="text-2xl font-bold text-gray-800"><span data-t="questions">Questions</span> (<span id="editor-question-count">0</span>)</h2>
+                    <div class="flex gap-2">
+                        <input type="file" id="csv-file-input" accept=".csv" onchange="handleCSVUpload(event)" class="hidden">
+                        <button onclick="triggerCSVSelect()" class="border-2 border-blue-600 text-blue-600 hover:bg-blue-50 px-4 py-2 rounded-lg font-medium transition-all flex items-center gap-2">
+                            <i class="fa-solid fa-file-upload"></i> <span data-t="upload_csv">Upload CSV</span>
+                        </button>
+                        <button onclick="addManualQuestion()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-all flex items-center gap-2">
+                            <i class="fa-solid fa-plus"></i> <span data-t="add_manually">Add Manually</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div id="questions-editor-list" class="space-y-6">
+                    <!-- Questions dynamic editor cards -->
+                </div>
+
+                <div class="mt-8 flex justify-end">
+                    <button onclick="saveCreatedExam()" class="px-8 py-3 text-lg shadow-lg bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-all flex items-center gap-2">
+                        <i class="fa-solid fa-floppy-disk"></i> <span data-t="save_sync">Save & Sync Live</span>
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- --- VIEW 5: STUDENT LOGIN --- -->
+        <section id="view-student_login" class="max-w-md mx-auto mt-20 bg-white p-8 rounded-2xl shadow-xl animate-fade-in hidden">
+            <div class="text-center mb-8">
+                <div class="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 text-blue-600">
+                    <i class="fa-solid fa-user-graduate text-3xl"></i>
+                </div>
+                <h2 data-t="student_portal" class="text-2xl font-bold text-gray-800">Student Portal</h2>
+                <p data-t="enter_details" class="text-gray-500">Enter your details to take a retake exam</p>
+            </div>
+            
+            <form onsubmit="handleStudentLogin(event)" class="space-y-5">
+                <div class="flex flex-col gap-1">
+                    <label class="text-sm font-semibold text-gray-700"><span data-t="full_name">Full Name</span> <span class="text-red-500">*</span></label>
+                    <input id="stud-name" type="text" required placeholder="e.g. Chan Tai Man" class="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="flex flex-col gap-1">
+                        <label class="text-sm font-semibold text-gray-700"><span data-t="class_label">Class</span> <span class="text-red-500">*</span></label>
+                        <input id="stud-class" type="text" required placeholder="e.g. 3A" class="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none">
+                    </div>
+                    <div class="flex flex-col gap-1">
+                        <label class="text-sm font-semibold text-gray-700"><span data-t="class_number">Class Number</span> <span class="text-red-500">*</span></label>
+                        <input id="stud-no" type="number" required placeholder="e.g. 15" class="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none">
+                    </div>
+                </div>
+                <button type="submit" data-t="enter_dashboard" class="w-full py-3 mt-4 text-lg rounded-lg font-medium bg-blue-600 text-white hover:bg-blue-700 transition-all">Enter Dashboard</button>
+            </form>
+            <button onclick="navigateTo('landing')" data-t="cancel_return" class="w-full text-center mt-6 text-sm text-gray-400 hover:text-gray-600">Cancel & Return</button>
+        </section>
+
+        <!-- --- VIEW 6: STUDENT DASHBOARD --- -->
+        <section id="view-student_dashboard" class="max-w-5xl mx-auto animate-fade-in pb-12 hidden">
+            <div class="bg-blue-600 text-white rounded-2xl p-8 mb-8 flex justify-between items-center shadow-lg flex-wrap gap-4">
+                <div>
+                    <h1 class="text-3xl font-bold mb-1"><span data-t="welcome">Welcome</span>, <span id="dash-student-name">Student</span></h1>
+                    <p class="text-blue-200"><span data-t="class_label">Class</span>: <span id="dash-student-class">--</span> | <span data-t="class_number">Class Number</span>: <span id="dash-student-no">--</span></p>
+                </div>
+                <button onclick="exitStudentSession()" class="border-white border-2 text-white hover:bg-blue-500 px-4 py-2 rounded-lg font-medium transition-all flex items-center gap-2">
+                    <i class="fa-solid fa-arrow-right-from-bracket"></i> <span data-t="exit">Exit</span>
+                </button>
+            </div>
+
+            <div class="flex justify-between items-center mb-6">
+                <h2 data-t="available_exams" class="text-2xl font-bold text-gray-800">Available Retake Exams</h2>
+                <button onclick="triggerDashboardManualRefresh()" class="bg-blue-100 text-blue-700 hover:bg-blue-200 p-2.5 rounded-lg flex items-center gap-1.5 text-sm font-semibold transition-all">
+                    <i class="fa-solid fa-arrows-rotate"></i> <span data-t="refresh_list">Refresh List</span>
+                </button>
+            </div>
+            
+            <div id="student-exams-container" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- Dynamic student exams list -->
+            </div>
+        </section>
+
+        <!-- --- VIEW 7: EXAM PLAYER --- -->
+        <section id="view-exam_player" class="max-w-7xl mx-auto px-4 mt-6 animate-fade-in pb-12 hidden">
+            <div id="exam-player-layout-container">
+                <!-- Renders side-by-side or singular based on activeExam.referenceMaterial -->
+            </div>
+        </section>
+
+        <!-- --- VIEW 8: EXAM RESULT --- -->
+        <section id="view-exam_result" class="max-w-2xl mx-auto mt-16 text-center animate-fade-in bg-white p-12 rounded-3xl shadow-xl border border-gray-100 hidden">
+            <div id="result-badge-container">
+                <!-- Icon container -->
+            </div>
+            
+            <h1 id="result-header" class="text-4xl font-bold text-gray-800 mb-2">Exam Completed</h1>
+            <p data-t="records_saved" class="text-gray-500 mb-8 text-lg">Your results have been automatically securely recorded.</p>
+            
+            <div class="bg-gray-50 rounded-2xl p-8 mb-8 inline-block text-left min-w-[300px] border border-gray-200 shadow-sm">
+                <div class="space-y-4">
+                    <div class="flex justify-between border-b pb-2"><span class="text-gray-500" data-t="th_subject">Subject</span>: <span id="res-subject" class="font-bold">--</span></div>
+                    <div class="flex justify-between border-b pb-2"><span class="text-gray-500" data-t="th_score">Score</span>: <span id="res-score" class="font-bold text-blue-600">0 / 0</span></div>
+                    <div class="flex justify-between border-b pb-2"><span class="text-gray-500" data-t="percentage_label">Percentage</span>: <span id="res-percentage" class="font-bold">0%</span></div>
+                    <div class="flex justify-between pt-2"><span class="text-gray-500" data-t="th_status">Status</span>: <span id="res-status" class="font-bold">--</span></div>
+                </div>
+            </div>
+            
+            <div class="mt-8">
+                <button onclick="navigateTo('student_dashboard')" data-t="return_dashboard" class="px-8 py-3 w-full max-w-sm mx-auto rounded-lg font-medium bg-blue-600 text-white hover:bg-blue-700 transition-all shadow-md">
+                    Return to Dashboard
+                </button>
+            </div>
+        </section>
+
+    </div>
+
+    <!-- Footnote Credits -->
+    <div class="w-full max-w-7xl mx-auto text-center text-xs text-gray-400 mt-8 py-4 border-t border-gray-100">
+        &copy; 2026 Retake Exam Platform. All rights reserved. / 統一補考系統 版權所有。
+    </div>
+
+    <!-- ==================== CONTROLLER & APP ENGINE ==================== -->
+    <script>
+        // --- TRANSLATION RESOURCES (BILINGUAL DICTIONARY) ---
+        const i18n = {
+            en: {
+                syncing_db: "Syncing Database...",
+                db_error_title: "Database Connection Error",
+                db_error_desc: "Unable to connect to the cloud server securely. Operating in offline mock backup mode.",
+                offline_title: "Authentication Offline",
+                offline_desc: "You are operating offline. Saving changes to this local computer only.",
+                uploading_exam: "Uploading Exam Details to Cloud...",
+                success: "Success",
+                exam_uploaded: "Exam has been uploaded and is live across all school computers!",
+                cloud_error_title: "Cloud Storage Error",
+                cloud_error_desc: "Failed to upload to the internet. Please check your Firestore rules configuration.",
+                deleting: "Deleting from Cloud...",
+                deleted_title: "Deleted",
+                deleted_desc: "The exam was completely removed from all computers.",
+                saving_settings: "Saving integration settings to Cloud...",
+                webhook_saved: "Google Sheet Webhook URL saved in the Cloud! All school computers are now synchronized.",
+                error: "Error",
+                webhook_save_failed: "Failed to save settings to the Cloud. Please try again.",
+                saving_registry: "Syncing Master Registry to Cloud...",
+                registry_uploaded_success: "Successfully synchronized {count} student retake assignments!",
+                registry_upload_failed: "Failed to upload student registry list to Firestore. Check connection rules.",
+                clearing_registry: "Clearing Student Registry...",
+                registry_cleared_msg: "All records inside the student registry have been successfully removed.",
+                warning_title: "Warning",
+                cheat_warning: "Navigating away from the exam tab is not allowed. This incident has been recorded.",
+                title: "Retake Exam Platform",
+                subtitle: "Create exams on any teacher computer and host them live instantly for students throughout the school network.",
+                student_access: "Student Access",
+                student_desc: "Login to take your assigned retake examinations.",
+                teacher_admin: "Teacher Admin",
+                teacher_desc: "Manage exams, upload questions, and configure live export.",
+                teacher_auth: "Teacher Authentication",
+                enter_pin: "Enter Admin PIN to manage exams",
+                admin_pin: "Admin PIN",
+                access_dashboard: "Access Dashboard",
+                cancel: "Cancel",
+                teacher_dashboard: "Teacher Dashboard",
+                live_connected: "Live internet sync connected. Configure examinations below.",
+                logout: "Logout",
+                tab_exams: "Manage Exams (Live)",
+                tab_results: "Student Results (Live)",
+                tab_integration: "Live Sheet Sync",
+                tab_registry: "Student Registry",
+                active_exams: "Active Exams (Cloud Synced)",
+                create_exam: "Create New Exam",
+                exam_records: "Exam Records",
+                export_csv: "Export Manual CSV",
+                th_date: "Date",
+                th_student: "Student",
+                th_class: "Class (No.)",
+                th_class_no: "Seat No.",
+                th_subject: "Subject",
+                th_score: "Score",
+                th_status: "Status",
+                sheets_integration: "Google Sheets Live Integration",
+                integration_desc: "Connect your portal directly to a target Google Sheet spreadsheet to record student submissions instantly.",
+                webhook_url_label: "Google Web App URL (Deployment Webhook)",
+                save_sync_url: "Save Sync URL",
+                sync_active: "Live sync is active! Student results will be exported live.",
+                sync_inactive: "No URL provided. Student scores will be saved in the offline browser storage only.",
+                guide_title: "Quick Guide to setting up your Google Sheet:",
+                guide_1: "Create a blank Google Sheet.",
+                guide_2: "Go to Extensions -> Apps Script.",
+                guide_3: "Paste the Google Apps Script Webhook handler code.",
+                guide_4: "Click Deploy -> New deployment -> Web app.",
+                guide_5: "Set access to \"Anyone\", deploy, and copy the Web App URL into the box above.",
+                back_to_exams: "Back to Exams",
+                exam_details: "Exam Details",
+                subject_name: "Subject Name",
+                subject_teacher: "Subject Teacher",
+                exam_duration: "Duration (Minutes)",
+                passing_score: "Passing Score (%)",
+                assigned_candidates_label: "Assigned Students (Target Candidates)",
+                assigned_candidates_hint: "Leave blank for ALL students. Or list targets separated by commas (e.g., '3A' to assign to the entire class, '3A-15' for 3A seat 15, or 'Chan Tai Man' for specific names).",
+                databank_label: "Databank / Reference Material (Optional)",
+                databank_hint: "If you have reference tables, passages, formulas, or maps, enter them here. Students will see this on the left-hand side of their screens during the examination.",
+                questions: "Questions",
+                upload_csv: "Upload CSV",
+                add_manually: "Add Manually",
+                save_sync: "Save & Sync Live",
+                student_portal: "Student Portal",
+                enter_details: "Enter your details to take a retake exam",
+                full_name: "Full Name",
+                class_label: "Class",
+                class_number: "Class Number",
+                enter_dashboard: "Enter Dashboard",
+                cancel_return: "Cancel & Return",
+                welcome: "Welcome",
+                exit: "Exit",
+                available_exams: "Available Retake Exams",
+                refresh_list: "Refresh List",
+                records_saved: "Your results have been automatically securely recorded.",
+                percentage_label: "Percentage",
+                return_dashboard: "Return to Dashboard",
+                no_exams_cloud: "No exams created in Cloud",
+                click_create: "Click \"Create New Exam\" to begin storing live.",
+                has_databank_tag: "Has Databank File",
+                edit_btn: "Edit",
+                mins: "mins",
+                questions_count: "Questions",
+                databank_included: "Databank Included",
+                start_exam_btn: "Start Exam",
+                refreshing_scheduled: "Refreshing Scheduled Exams...",
+                incomplete_data_title: "Incomplete Data",
+                incomplete_data_desc: "Please fill in all subject details and add at least one question.",
+                csv_upload_success: "Imported {count} questions successfully.",
+                csv_upload_failed: "Could not parse questions. Please check CSV format.",
+                no_data_title: "No Data",
+                no_data_desc: "There are no student results available to export yet.",
+                option_placeholder: "Option",
+                question_label: "Question",
+                correct_ans_hint: "CSV Template format: Question, Option A, Option B, Option C, Option D, Correct(A/B/C/D)",
+                previous: "Previous",
+                next: "Next",
+                submit_exam_btn: "Submit Exam",
+                timer_running: "Time Left",
+                databank_display_title: "Databank & Reference Material",
+                no_results_server: "No student results recorded on the server yet.",
+                congrats: "Congratulations!",
+                exam_completed: "Exam Completed",
+                registry_title: "Master Student Retake Registry",
+                registry_desc: "Upload your school's master retake excel sheet. This will override individual exam filters.",
+                upload_registry_btn: "Upload Registry CSV",
+                clear_registry_btn: "Clear Registry",
+                csv_guidelines: "Required Google Sheet Column Format:",
+                csv_columns_needed: "The spreadsheet parser searches for: Class (班別), Class Number (座號), and Student Name (姓名) dynamically. You can upload WebSAMS files directly.",
+                no_students_registry: "No student assignments found in registry database.",
+                clear_confirm_title: "Confirm Clearance",
+                clear_confirm_msg: "Are you sure you want to delete all student assignments from the cloud database?"
+            },
+            zh: {
+                syncing_db: "雲端數據庫同步中...",
+                db_error_title: "數據庫連接錯誤",
+                db_error_desc: "無法安全連接到雲端服務器。系統將自動切換為離線模擬模式運作。",
+                offline_title: "離線身份認證",
+                offline_desc: "您目前處於離線狀態。修改的內容將僅保存在本機電腦中。",
+                uploading_exam: "上傳考試資料至雲端...",
+                success: "儲存成功",
+                exam_uploaded: "考試已成功上載，並且已在所有校內電腦上即時發佈！",
+                cloud_error_title: "雲端儲存錯誤",
+                cloud_error_desc: "未能上傳至雲端。請檢查您的 Firestore 數據庫安全規則配置。",
+                deleting: "從雲端刪除中...",
+                deleted_title: "刪除成功",
+                deleted_desc: "該考試已從所有學校電腦中徹底移除。",
+                saving_settings: "正在保存同步設置到雲端...",
+                webhook_saved: "Google 試算表 Webhook 連結已保存在雲端！所有學校電腦已自動完成同步。",
+                error: "錯誤",
+                webhook_save_failed: "未能保存設置至雲端，請重試。",
+                saving_registry: "同步學生名單到校園數據庫...",
+                registry_uploaded_success: "成功同步 {count} 條指派數據！",
+                registry_upload_failed: "無法上傳補考對象名冊，請確保 Firestore 資料庫連線和權限已配置。",
+                clearing_registry: "正在清空補考名冊數據...",
+                registry_cleared_msg: "數據庫中的所有補考學生指派記錄已被成功清空。",
+                warning_title: "系統警告",
+                cheat_warning: "考試期間不允許離開本頁面或切換標籤。此行為已被記錄並將通知監考老師。",
+                title: "統一補考系統",
+                subtitle: "在任何教師電腦上輕鬆創建考卷，並立即為整個校園網絡中的學生進行實時發佈。",
+                student_access: "學生補考入口",
+                student_desc: "登入以進行學校分派給您的補考卷。",
+                teacher_admin: "教師後台管理",
+                teacher_desc: "管理補考科目、上傳試題 CSV 以及配置 Google 試算表同步。",
+                teacher_auth: "教師身份驗證",
+                enter_pin: "請輸入管理員密碼以進入後台",
+                admin_pin: "管理員密碼",
+                access_dashboard: "登入管理後台",
+                cancel: "取消",
+                teacher_dashboard: "教師後台管理面板",
+                live_connected: "雲端即時同步已連接。您可以在下方配置 or 新增考試。",
+                logout: "導出後台",
+                tab_exams: "管理考試 (雲端即時)",
+                tab_results: "補考成績記錄 (雲端)",
+                tab_integration: "Google 試算表同步配置",
+                tab_registry: "補考名冊管理",
+                active_exams: "進行中的考試 (已同步雲端)",
+                create_exam: "創建新考卷",
+                exam_records: "學生補考成績記錄",
+                export_csv: "導出本機 CSV 檔案",
+                th_date: "日期",
+                th_student: "學生姓名",
+                th_class: "班別",
+                th_class_no: "座號",
+                th_subject: "補考科目",
+                th_score: "成績",
+                th_status: "結果",
+                sheets_integration: "Google Sheets 試算表即時寫入整合",
+                integration_desc: "將補考平台直接連接到您的 Google 試算表，以便學生的補考成績能於提交時即時寫入您的雲端表格中。",
+                webhook_url_label: "Google Web App 網址 (部署 Webhook 連結)",
+                save_sync_url: "儲存 Webhook 連結",
+                sync_active: "實時寫入已啟動！學生提交試卷後，成績將同步寫入 Google 試算表。",
+                sync_inactive: "尚未配置 URL 網址。學生補考成績目前僅會保存在校園雲端數據庫中。",
+                guide_title: "快速設定 Google 試算表步驟：",
+                guide_1: "新建一個空白的 Google 試算表。",
+                guide_2: "Go to Extensions -> Apps Script.",
+                guide_3: "Paste the Google Apps Script Webhook handler code.",
+                guide_4: "Click Deploy -> New deployment -> Web app.",
+                guide_5: "Set access to \"Anyone\", deploy, and copy the Web App URL into the box above.",
+                back_to_exams: "返回考試列表",
+                exam_details: "考試基本資料配置",
+                subject_name: "科目名稱",
+                subject_teacher: "科任老師",
+                exam_duration: "考試時限 (分鐘)",
+                passing_score: "合格分數 (%)",
+                assigned_candidates_label: "分派對象（補考學生名單）",
+                assigned_candidates_hint: "留空表示對所有學生開放。或輸入指定補考對象，用逗號分隔（例如：「3A」代表全班3A、「3A-15」代表3A班15號、or 學生姓名）。",
+                databank_label: "考卷數據庫 / 閱讀材料面板 (選填)",
+                databank_hint: "如果您有特定的閱讀文章、公式表、地圖 or 數據資料庫，請在此輸入。考試時學生的螢幕左側會自動分屏顯示此內容供其對照答題。",
+                questions: "試題清單",
+                upload_csv: "上傳試題 CSV 檔",
+                add_manually: "手動新增題目",
+                save_sync: "保存並同步至雲端",
+                student_portal: "學生登入入口",
+                enter_details: "請輸入您的個人資料以開始補考",
+                full_name: "英文/中文姓名",
+                class_label: "班別",
+                class_number: "班級座號",
+                enter_dashboard: "登入補考系統",
+                cancel_return: "返回主頁",
+                welcome: "歡迎您",
+                exit: "安全登出",
+                available_exams: "可進行的補考科目",
+                refresh_list: "重新整理列表",
+                records_saved: "您的補考成績已成功上傳並安全保存至學校系統。",
+                percentage_label: "百分比成績",
+                return_dashboard: "返回學生大堂",
+                no_exams_cloud: "雲端中暫時無任何考試",
+                click_create: "請點擊「創建新考卷」按鈕來新增校內補考。",
+                has_databank_tag: "含專屬數據庫",
+                edit_btn: "修改考卷",
+                mins: "分鐘",
+                questions_count: "題",
+                databank_included: "已附閱讀對照材料",
+                start_exam_btn: "開始進行考試",
+                refreshing_scheduled: "正在從雲端更新補考科目...",
+                incomplete_data_title: "資料不完整",
+                incomplete_data_desc: "請完整填寫考卷基本資訊，並至少新增一題試題。",
+                csv_upload_success: "成功導入 {count} 條題目！",
+                csv_upload_failed: "未能解析題目，請確保您的 CSV 格式正確。",
+                no_data_title: "暫無數據",
+                no_data_desc: "目前還沒有學生補考成績記錄可供導出。",
+                option_placeholder: "選項",
+                question_label: "問題",
+                correct_ans_hint: "CSV 範本格式：問題、選項 A、選項 B、選項 C、選項 D、正確答案 (A/B/C/D)",
+                previous: "上一題",
+                next: "下一題",
+                submit_exam_btn: "提交試卷",
+                timer_running: "剩餘時間",
+                databank_display_title: "考試數據庫 / 對照材料面版",
+                no_results_server: "雲端伺服器上目前暫時沒有學生的考試記錄。",
+                congrats: "恭喜您！完成補考",
+                exam_completed: "補考結束",
+                registry_title: "補考對象名冊管理",
+                registry_desc: "直接上傳學校的補考對象名冊（從 Google 試算表 / Excel 下載的 CSV 檔案），此名單將直接覆蓋和覆寫每張考卷的手動名單設置。",
+                upload_registry_btn: "上傳補考名冊 CSV",
+                clear_registry_btn: "清空雲端補考名冊",
+                csv_guidelines: "試算表或 CSV 格式指南：",
+                csv_columns_needed: "系統會自動識別：Class（班別）、Class Number（座號）、Student Name（姓名）。其餘所有列（如中文、英文、數學等）將被自動當作補考科目。您只需在格子中標記「TRUE」或任何非空字符，系統就會自動分派。",
+                no_students_registry: "補考數據庫中目前暫無任何學生對照記錄。",
+                clear_confirm_title: "確認清空",
+                clear_confirm_msg: "您確定要清空雲端伺服器上的所有補考對象記錄嗎？"
+            }
+        };
+
+        function t(key, replacements = {}) {
+            const lang = window.state.language || 'en';
+            let translation = i18n[lang][key] || i18n['en'][key] || key;
+            
+            Object.keys(replacements).forEach(placeholder => {
+                translation = translation.replace(`{${placeholder}}`, replacements[placeholder]);
+            });
+            return translation;
+        }
+        window.t = t;
+
+        function setLanguage(langCode) {
+            window.state.language = langCode;
+            
+            const enBtn = document.getElementById('lang-btn-en');
+            const zhBtn = document.getElementById('lang-btn-zh');
+            
+            if (langCode === 'zh') {
+                zhBtn.className = "px-3.5 py-1.5 rounded-lg text-xs md:text-sm font-semibold border transition-all bg-blue-600 text-white shadow-sm flex items-center gap-1.5";
+                enBtn.className = "px-3.5 py-1.5 rounded-lg text-xs md:text-sm font-semibold border transition-all bg-white text-gray-700 shadow-sm flex items-center gap-1.5";
+            } else {
+                enBtn.className = "px-3.5 py-1.5 rounded-lg text-xs md:text-sm font-semibold border transition-all bg-blue-600 text-white shadow-sm flex items-center gap-1.5";
+                zhBtn.className = "px-3.5 py-1.5 rounded-lg text-xs md:text-sm font-semibold border transition-all bg-white text-gray-700 shadow-sm flex items-center gap-1.5";
+            }
+
+            document.querySelectorAll('[data-t]').forEach(el => {
+                const key = el.getAttribute('data-t');
+                el.innerText = t(key);
+            });
+
+            if (window.state.view === 'teacher_admin') {
+                renderExams();
+                renderResults();
+                renderRegistryTable();
+                updateSyncStatus();
+            } else if (window.state.view === 'exam_editor') {
+                syncEditorFields();
+            } else if (window.state.view === 'student_dashboard') {
+                renderStudentDashboardExams();
+            } else if (window.state.view === 'exam_player') {
+                renderExamPlayer();
+            } else if (window.state.view === 'exam_result') {
+                const result = window.state.activeExam.finalResult;
+                if (result) renderExamResult(result);
+            }
+        }
+        window.setLanguage = setLanguage;
+
+        function showLoadingSpinner(visible, text = "Syncing Database...") {
+            const spinner = document.getElementById('loading-overlay');
+            const loadingText = document.getElementById('loading-text');
+            if (visible) {
+                loadingText.innerText = text;
+                spinner.classList.remove('hidden');
+            } else {
+                spinner.classList.add('hidden');
+            }
+        }
+
+        async function triggerDashboardManualRefresh() {
+            showLoadingSpinner(true, t("refreshing_scheduled"));
+            if (window.syncExamsFromCloud) {
+                await window.syncExamsFromCloud();
+                if (window.syncRegistryFromCloud) {
+                    await window.syncRegistryFromCloud();
+                }
+            }
+            renderStudentDashboardExams();
+            showLoadingSpinner(false);
+        }
+
+        function navigateTo(viewName) {
+            window.state.view = viewName;
+            
+            const views = ['view-landing', 'view-teacher_login', 'view-teacher_admin', 'view-exam_editor', 'view-student_login', 'view-student_dashboard', 'view-exam_player', 'view-exam_result'];
+            views.forEach(id => {
+                const element = document.getElementById(id);
+                if (element) element.classList.add('hidden');
+            });
+
+            const target = document.getElementById(`view-${viewName}`);
+            if (target) target.classList.remove('hidden');
+
+            setLanguage(window.state.language);
+        }
+
+        function showAlert(title, message, type = 'info') {
+            document.getElementById('alert-title').innerText = title;
+            document.getElementById('alert-message').innerText = message;
+            document.getElementById('alert-btn').innerText = t("return_dashboard");
+            
+            const iconSpan = document.getElementById('alert-icon');
+            const contentBox = document.getElementById('alert-content-box');
+            
+            iconSpan.innerHTML = '';
+            contentBox.className = 'p-4 rounded-lg flex items-start gap-4';
+
+            if (type === 'error') {
+                iconSpan.innerHTML = '<i class="fa-solid fa-triangle-exclamation text-red-500"></i>';
+                contentBox.classList.add('bg-red-50', 'text-red-800', 'border', 'border-red-200');
+            } else if (type === 'success') {
+                iconSpan.innerHTML = '<i class="fa-solid fa-circle-check text-green-500"></i>';
+                contentBox.classList.add('bg-green-50', 'text-green-800', 'border', 'border-green-200');
+            } else {
+                iconSpan.innerHTML = '<i class="fa-solid fa-circle-info text-blue-500"></i>';
+                contentBox.classList.add('bg-blue-50', 'text-blue-800', 'border', 'border-blue-200');
+            }
+
+            document.getElementById('alert-modal').classList.remove('hidden');
+        }
+
+        function closeAlert() {
+            document.getElementById('alert-modal').classList.add('hidden');
+        }
+
+        function handleTeacherLogin(e) {
+            e.preventDefault();
+            const pinVal = document.getElementById('teacher-pin').value;
+            if (pinVal === '8888') {
+                document.getElementById('teacher-pin').value = '';
+                navigateTo('teacher_admin');
+            } else {
+                showAlert(t("error"), t("teacher_auth") + " PIN incorrect.", "error");
+            }
+        }
+
+        function switchTeacherTab(tabName) {
+            const tabs = ['exams', 'results', 'registry', 'settings'];
+            tabs.forEach(tName => {
+                document.getElementById(`tab-${tName}`).classList.add('hidden');
+                document.getElementById(`tab-${tName}-btn`).className = 'px-4 py-2 font-semibold rounded-lg transition-colors text-gray-500 hover:bg-gray-100 whitespace-nowrap';
+            });
+
+            document.getElementById(`tab-${tabName}`).classList.remove('hidden');
+            document.getElementById(`tab-${tabName}-btn`).className = 'px-4 py-2 font-semibold rounded-lg transition-colors bg-blue-100 text-blue-700 whitespace-nowrap';
+        }
+
+        async function saveWebhookUrl() {
+            const url = document.getElementById('webhook-url-input').value.trim();
+            if (window.saveWebhookUrlToCloud) {
+                await window.saveWebhookUrlToCloud(url);
+            } else {
+                window.state.webhookUrl = url;
+            }
+            updateSyncStatus();
+        }
+
+        function updateSyncStatus() {
+            const activeStatus = document.getElementById('sync-status-active');
+            const inactiveStatus = document.getElementById('sync-status-inactive');
+            if (activeStatus && inactiveStatus) {
+                if (window.state.webhookUrl) {
+                    activeStatus.classList.remove('hidden');
+                    inactiveStatus.classList.add('hidden');
+                } else {
+                    activeStatus.classList.add('hidden');
+                    inactiveStatus.classList.remove('hidden');
+                }
+            }
+        }
+
+        function loadConfigurationFromLocalStorage() {
+            const savedUrl = localStorage.getItem('retake_webhook_url');
+            window.state.webhookUrl = savedUrl ? savedUrl : '';
+            const input = document.getElementById('webhook-url-input');
+            if (input) input.value = window.state.webhookUrl;
+            updateSyncStatus();
+
+            const savedExams = localStorage.getItem('retake_exams');
+            window.state.exams = savedExams ? JSON.parse(savedExams) : [];
+            renderExams();
+
+            const savedResults = localStorage.getItem('retake_results');
+            window.state.results = savedResults ? JSON.parse(savedResults) : [];
+            renderResults();
+
+            const savedRegistry = localStorage.getItem('retake_registry');
+            window.state.registry = savedRegistry ? JSON.parse(savedRegistry) : [];
+            renderRegistryTable();
+        }
+
+        function renderExams() {
+            const container = document.getElementById('exams-container');
+            container.innerHTML = '';
+
+            if (window.state.exams.length === 0) {
+                container.innerHTML = `
+                    <div class="col-span-full text-center py-16 bg-white rounded-xl shadow-sm border border-gray-100">
+                        <i class="fa-solid fa-cloud-arrow-down text-4xl text-gray-300 mb-4 animate-bounce"></i>
+                        <h3 class="text-lg font-medium text-gray-600">${t("no_exams_cloud")}</h3>
+                        <p class="text-gray-400 mt-1">${t("click_create")}</p>
+                    </div>
+                `;
+                return;
+            }
+
+            window.state.exams.forEach(exam => {
+                const card = document.createElement('div');
+                card.className = "bg-white rounded-xl shadow-sm border border-gray-200 p-6 flex flex-col hover:shadow-md transition-shadow animate-fade-in";
+                card.innerHTML = `
+                    <h3 class="text-xl font-bold text-blue-800 mb-2">${escapeHtml(exam.subject)}</h3>
+                    <p class="text-gray-600 text-sm mb-2">${t("subject_teacher")}: ${escapeHtml(exam.teacher)}</p>
+                    <div class="flex flex-wrap items-center gap-3 text-xs text-gray-500 mb-6">
+                        <span class="flex items-center gap-1 bg-gray-100 px-2 py-1 rounded"><i class="fa-solid fa-clock"></i> ${exam.duration}${t("mins")}</span>
+                        <span class="flex items-center gap-1 bg-gray-100 px-2 py-1 rounded"><i class="fa-solid fa-list-check"></i> ${exam.questions.length} ${t("questions_count")}</span>
+                        ${exam.referenceMaterial ? `
+                            <span class="flex items-center gap-1 bg-amber-50 text-amber-700 border border-amber-200 px-2 py-1 rounded font-semibold">
+                                <i class="fa-solid fa-database"></i> ${t("has_databank_tag")}
+                            </span>
+                        ` : ''}
+                    </div>
+                    <div class="mt-auto flex gap-2">
+                        <button onclick="editExam('${exam.id}')" class="flex-1 bg-gray-100 text-gray-800 hover:bg-gray-200 px-4 py-2 rounded-lg font-medium transition-all flex items-center justify-center gap-2">
+                            <i class="fa-solid fa-pen-to-square"></i> ${t("edit_btn")}
+                        </button>
+                        <button onclick="deleteExam('${exam.id}')" class="bg-red-100 text-red-700 hover:bg-red-200 px-3 py-2 rounded-lg font-medium transition-all">
+                            <i class="fa-solid fa-trash-can"></i>
+                        </button>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        function openExamCreator() {
+            window.state.editingExam = {
+                id: Date.now().toString(),
+                subject: '',
+                teacher: '',
+                duration: 30,
+                passingScore: 50,
+                assignedCandidates: '',
+                referenceMaterial: '',
+                questions: []
+            };
+            syncEditorFields();
+            navigateTo('view_exam_editor');
+        }
+
+        function editExam(examId) {
+            const target = window.state.exams.find(e => e.id === examId);
+            if (!target) return;
+            window.state.editingExam = JSON.parse(JSON.stringify(target)); 
+            syncEditorFields();
+            navigateTo('view_exam_editor');
+        }
+
+        async function deleteExam(examId) {
+            if (window.deleteExamFromCloud) {
+                await window.deleteExamFromCloud(examId);
+            }
+        }
+
+        function closeExamEditor() {
+            window.state.editingExam = null;
+            navigateTo('teacher_admin');
+        }
+
+        function syncEditorFields() {
+            document.getElementById('edit-subject').value = window.state.editingExam.subject;
+            document.getElementById('edit-teacher').value = window.state.editingExam.teacher;
+            document.getElementById('edit-duration').value = window.state.editingExam.duration;
+            document.getElementById('edit-passing').value = window.state.editingExam.passingScore;
+            document.getElementById('edit-assigned').value = window.state.editingExam.assignedCandidates || '';
+            document.getElementById('edit-reference').value = window.state.editingExam.referenceMaterial;
+            
+            document.getElementById('editor-question-count').innerText = window.state.editingExam.questions.length;
+            renderEditorQuestions();
+        }
+
+        function renderEditorQuestions() {
+            const container = document.getElementById('questions-editor-list');
+            container.innerHTML = '';
+
+            if (window.state.editingExam.questions.length === 0) {
+                container.innerHTML = `
+                    <div class="text-center py-12 bg-gray-50 rounded-lg border-2 border-dashed border-gray-200 font-sans">
+                        <i class="fa-solid fa-circle-question mx-auto text-gray-400 mb-2 text-3xl"></i>
+                        <p class="text-gray-500">${t("no_exams_cloud")}</p>
+                        <p class="text-sm text-gray-400 mt-2">${t("correct_ans_hint")}</p>
+                    </div>
+                `;
+                return;
+            }
+
+            window.state.editingExam.questions.forEach((q, qIndex) => {
+                const card = document.createElement('div');
+                card.className = "p-4 border rounded-lg bg-gray-50 relative group animate-fade-in";
+                card.innerHTML = `
+                    <button onclick="removeEditorQuestion(${qIndex})" class="absolute top-4 right-4 text-red-400 hover:text-red-600 transition-opacity">
+                        <i class="fa-solid fa-trash-can text-lg"></i>
+                    </button>
+                    <div class="flex flex-col gap-1 mb-4">
+                        <label class="text-sm font-semibold text-gray-700">${t("question_label")} ${qIndex + 1}</label>
+                        <input type="text" value="${escapeHtml(q.text)}" oninput="updateEditorQuestionText(${qIndex}, this.value)" class="border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        ${[0, 1, 2, 3].map(optIdx => `
+                            <div class="flex items-center gap-2">
+                                <input type="radio" name="correct-${q.id}" ${q.correctOption === optIdx ? 'checked' : ''} onchange="updateEditorQuestionCorrectOption(${qIndex}, ${optIdx})" class="w-5 h-5 text-blue-600">
+                                <input type="text" value="${escapeHtml(q.options[optIdx])}" oninput="updateEditorQuestionOption(${qIndex}, ${optIdx}, this.value)" placeholder="${t("option_placeholder")} ${String.fromCharCode(65 + optIdx)}" class="flex-1 border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        function updateEditorQuestionText(qIndex, text) {
+            window.state.editingExam.questions[qIndex].text = text;
+        }
+
+        function updateEditorQuestionOption(qIndex, optIdx, text) {
+            window.state.editingExam.questions[qIndex].options[optIdx] = text;
+        }
+
+        function updateEditorQuestionCorrectOption(qIndex, optIdx) {
+            window.state.editingExam.questions[qIndex].correctOption = optIdx;
+        }
+
+        function removeEditorQuestion(qIndex) {
+            window.state.editingExam.questions.splice(qIndex, 1);
+            document.getElementById('editor-question-count').innerText = window.state.editingExam.questions.length;
+            renderEditorQuestions();
+        }
+
+        function addManualQuestion() {
+            window.state.editingExam.questions.push({
+                id: (Date.now() + Math.random()).toString(),
+                text: '',
+                options: ['', '', '', ''],
+                correctOption: 0
+            });
+            document.getElementById('editor-question-count').innerText = window.state.editingExam.questions.length;
+            renderEditorQuestions();
+        }
+
+        function triggerCSVSelect() {
+            document.getElementById('csv-file-input').click();
+        }
+
+        function handleCSVUpload(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const text = event.target.result;
+                const rows = parseCSV(text);
+                const parsedQuestions = [];
+                let skippedHeader = false;
+
+                for (const row of rows) {
+                    if (row.length < 1) continue;
+                    
+                    if (!skippedHeader && row[0].toLowerCase().includes('question')) {
+                        skippedHeader = true;
+                        continue;
+                    }
+                    
+                    if (row.length >= 6) {
+                        const q = row[0];
+                        const a = row[1];
+                        const b = row[2];
+                        const c = row[3];
+                        const d = row[4];
+                        const correctAns = row[5].toLowerCase().trim();
+                        
+                        const map = { 'a': 0, 'b': 1, 'c': 2, 'd': 3 };
+                        const correctIndex = map[correctAns];
+                        
+                        if (q && correctIndex !== undefined) {
+                            parsedQuestions.push({
+                                id: (Date.now() + Math.random()).toString(),
+                                text: q,
+                                options: [a, b, c, d],
+                                correctOption: correctIndex
+                            });
+                        }
+                    }
+                }
+
+                if (parsedQuestions.length > 0) {
+                    window.state.editingExam.questions = [...window.state.editingExam.questions, ...parsedQuestions];
+                    document.getElementById('editor-question-count').innerText = window.state.editingExam.questions.length;
+                    renderEditorQuestions();
+                    showAlert(t("success"), t("csv_upload_success", { count: parsedQuestions.length }), "success");
+                } else {
+                    showAlert(t("error"), t("csv_upload_failed"), "error");
+                }
+            };
+            reader.readAsText(file);
+            e.target.value = '';
+        }
+
+        function triggerRegistryCSVSelect() {
+            document.getElementById('registry-csv-input').click();
+        }
+
+        function processRegistryCSVText(text) {
+            const rows = parseCSV(text);
+            if (rows.length === 0) return;
+
+            // Strip Byte Order Marks (BOM) & Trim Spaces
+            const rawHeaders = rows[0].map(h => h.trim().replace(/^\uFEFF/i, ""));
+            const headersLower = rawHeaders.map(h => h.toLowerCase());
+            
+            // Priority column locating algorithms
+            let classIdx = headersLower.findIndex(h => h === 'class' || h === '班別' || h === '班級');
+            if (classIdx === -1) {
+                classIdx = headersLower.findIndex(h => h.includes('class') && !h.includes('number') && !h.includes('no'));
+            }
+            
+            let classNoIdx = headersLower.findIndex(h => h === 'class number' || h === 'class no' || h === 'no' || h === '座號' || h === '學號');
+            if (classNoIdx === -1) {
+                classNoIdx = headersLower.findIndex(h => h.includes('number') || h.includes('no') || h.includes('座'));
+            }
+            
+            let nameIdx = headersLower.findIndex(h => h === 'student name' || h === 'name' || h === '姓名' || h === '學生');
+            if (nameIdx === -1) {
+                nameIdx = headersLower.findIndex(h => h.includes('name') || h.includes('姓'));
+            }
+
+            // Standard fallback safety indices
+            if (classIdx === -1) classIdx = 0;
+            if (classNoIdx === -1) classNoIdx = 1;
+            if (nameIdx === -1) nameIdx = 2;
+
+            const parsedStudents = [];
+            let explicitSubjectIdx = headersLower.findIndex(h => h === 'subject' || h === '補考科目' || h === '科目' || h === 'retake subject');
+            const isGridMode = (explicitSubjectIdx === -1);
+
+            for (let i = 1; i < rows.length; i++) {
+                const row = rows[i];
+                if (row.length <= Math.max(classIdx, classNoIdx, nameIdx)) continue;
+                
+                const sClass = row[classIdx]?.trim().toUpperCase();
+                const sClassNo = parseInt(row[classNoIdx]) || 0;
+                const sName = row[nameIdx]?.trim();
+
+                if (!sClass || !sClassNo || !sName) continue;
+
+                if (isGridMode) {
+                    for (let j = 0; j < row.length; j++) {
+                        if (j === classIdx || j === classNoIdx || j === nameIdx) continue;
+                        const subjectHeaderName = rawHeaders[j]?.trim();
+                        const cellValue = row[j]?.trim().toLowerCase();
+
+                        if (subjectHeaderName && cellValue) {
+                            const isAssigned = cellValue === "true" || 
+                                               cellValue === "yes" || 
+                                               cellValue === "y" || 
+                                               cellValue === "1" || 
+                                               cellValue === "補考" || 
+                                               cellValue === "✔";
+                                               
+                            if (isAssigned) {
+                                parsedStudents.push({
+                                    studentClass: sClass,
+                                    classNo: sClassNo,
+                                    studentName: sName,
+                                    subject: subjectHeaderName
+                                });
+                            }
+                        }
+                    }
+                } else {
+                    const sSubject = row[explicitSubjectIdx]?.trim();
+                    if (sSubject) {
+                        parsedStudents.push({
+                            studentClass: sClass,
+                            classNo: sClassNo,
+                            studentName: sName,
+                            subject: sSubject
+                        });
+                    }
+                }
+            }
+
+            if (parsedStudents.length > 0) {
+                if (window.uploadRegistryToCloud) {
+                    window.uploadRegistryToCloud(parsedStudents);
+                }
+            } else {
+                showAlert(t("error"), t("csv_upload_failed") + " No valid candidates found. Check columns.", "error");
+            }
+        }
+
+        function handleRegistryCSVUpload(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                processRegistryCSVText(event.target.result);
+            };
+            reader.readAsText(file);
+            e.target.value = ''; 
+        }
+
+        // --- Demo Simulation / Inject Sample File matching "List of retake students.csv" ---
+        function loadSampleRegistryFile() {
+            const sampleCSV = `Class,Class Number,Student Name,Chinese,English,Mathematics
+3A,5,Chan Tai Man,TRUE,FALSE,TRUE
+3A,12,Wong Ka Ki,FALSE,TRUE,TRUE
+3B,1,Cheung Sin Yee,TRUE,TRUE,FALSE
+3C,24,Lee Lai Yin,FALSE,TRUE,FALSE`;
+            processRegistryCSVText(sampleCSV);
+        }
+        window.loadSampleRegistryFile = loadSampleRegistryFile;
+
+        async function clearRegistry() {
+            if (confirm(t("clear_confirm_msg"))) {
+                if (window.clearRegistryFromCloud) {
+                    await window.clearRegistryFromCloud();
+                }
+            }
+        }
+
+        function renderRegistryTable() {
+            const body = document.getElementById('registry-table-body');
+            if (!body) return;
+            body.innerHTML = '';
+
+            if (window.state.registry.length === 0) {
+                body.innerHTML = `
+                    <tr>
+                        <td colspan="4" class="p-8 text-center text-gray-400 font-medium">${t("no_students_registry")}</td>
+                    </tr>
+                `;
+                return;
+            }
+
+            const sorted = [...window.state.registry].sort((a, b) => {
+                if (a.studentClass !== b.studentClass) {
+                    return a.studentClass.localeCompare(b.studentClass);
+                }
+                return a.classNo - b.classNo;
+            });
+
+            sorted.forEach(r => {
+                const tr = document.createElement('tr');
+                tr.className = "border-b border-gray-100 hover:bg-slate-50 transition-colors text-sm animate-fade-in";
+                tr.innerHTML = `
+                    <td class="p-3 font-semibold text-blue-700">${escapeHtml(r.studentClass)}</td>
+                    <td class="p-3 text-gray-600">${r.classNo}</td>
+                    <td class="p-3 font-medium text-gray-800">${escapeHtml(r.studentName)}</td>
+                    <td class="p-3 text-indigo-700 font-semibold">${escapeHtml(r.subject)}</td>
+                `;
+                body.appendChild(tr);
+            });
+        }
+
+        async function saveCreatedExam() {
+            window.state.editingExam.subject = document.getElementById('edit-subject').value.trim();
+            window.state.editingExam.teacher = document.getElementById('edit-teacher').value.trim();
+            window.state.editingExam.duration = parseInt(document.getElementById('edit-duration').value) || 0;
+            window.state.editingExam.passingScore = parseInt(document.getElementById('edit-passing').value) || 0;
+            window.state.editingExam.assignedCandidates = document.getElementById('edit-assigned').value.trim();
+            window.state.editingExam.referenceMaterial = document.getElementById('edit-reference').value.trim();
+
+            if (!window.state.editingExam.subject || !window.state.editingExam.teacher || window.state.editingExam.questions.length === 0) {
+                showAlert(t("incomplete_data_title"), t("incomplete_data_desc"), "error");
+                return;
+            }
+
+            if (window.saveExamToCloud) {
+                await window.saveExamToCloud(window.state.editingExam);
+            }
+            
+            window.state.editingExam = null;
+            navigateTo('teacher_admin');
+        }
+
+        function handleStudentLogin(e) {
+            e.preventDefault();
+            const name = document.getElementById('stud-name').value.trim();
+            const sClass = document.getElementById('stud-class').value.trim().toUpperCase();
+            const no = document.getElementById('stud-no').value.trim();
+
+            if (!name || !sClass || !no) {
+                showAlert(t("incomplete_data_title"), t("enter_details"), "error");
+                return;
+            }
+
+            window.state.currentStudent = { name, studentClass: sClass, classNo: parseInt(no) || 0 };
+            
+            document.getElementById('dash-student-name').innerText = name;
+            document.getElementById('dash-student-class').innerText = sClass;
+            document.getElementById('dash-student-no').innerText = no;
+
+            renderStudentDashboardExams();
+            navigateTo('student_dashboard');
+        }
+
+        function exitStudentSession() {
+            window.state.currentStudent = null;
+            navigateTo('landing');
+        }
+
+        function isStudentAssignedToExam(student, exam) {
+            if (window.state.registry && window.state.registry.length > 0) {
+                const sName = student.name.toLowerCase();
+                const sClass = student.studentClass.toLowerCase();
+                const sNo = student.classNo;
+
+                return window.state.registry.some(r => 
+                    r.studentName.toLowerCase() === sName &&
+                    r.studentClass.toLowerCase() === sClass &&
+                    r.classNo === sNo &&
+                    r.subject.toLowerCase() === exam.subject.toLowerCase()
+                );
+            }
+
+            if (!exam.assignedCandidates || exam.assignedCandidates.trim() === '') {
+                return true;
+            }
+
+            const targets = exam.assignedCandidates.split(',').map(item => item.trim().toLowerCase());
+            const sName = student.name.toLowerCase();
+            const sClass = student.studentClass.toLowerCase();
+            const sClassNo = student.classNo.toString();
+            const sCombo1 = `${sClass}-${sClassNo}`; 
+            const sCombo2 = `${sClass}(${sClassNo})`; 
+
+            for (let target of targets) {
+                if (target === sName) return true;
+                if (target === sClass) return true;
+                if (target === sCombo1) return true;
+                if (target === sCombo2) return true;
+            }
+            return false;
+        }
+
+        function renderStudentDashboardExams() {
+            const container = document.getElementById('student-exams-container');
+            container.innerHTML = '';
+
+            const assignedExams = window.state.exams.filter(exam => 
+                isStudentAssignedToExam(window.state.currentStudent, exam)
+            );
+
+            if (assignedExams.length === 0) {
+                container.innerHTML = `
+                    <div class="col-span-full text-center py-12 bg-white rounded-xl shadow-sm border border-gray-100 animate-fade-in animate-pulse">
+                        <i class="fa-solid fa-circle-exclamation text-amber-500 mb-4 text-4xl"></i>
+                        <p class="text-lg text-gray-600 font-medium">No assigned exams found for your account.</p>
+                        <p class="text-xs text-gray-400 mt-1">If this is an error, please click "Refresh List" or contact your exam supervisor.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            assignedExams.forEach(exam => {
+                const card = document.createElement('div');
+                card.className = "bg-white rounded-xl shadow-sm border border-gray-200 p-6 flex items-center justify-between hover:shadow-md transition-all group animate-fade-in flex-wrap gap-4";
+                card.innerHTML = `
+                    <div class="flex-1 min-w-[200px]">
+                        <h3 class="text-xl font-bold text-gray-800 mb-1">${escapeHtml(exam.subject)}</h3>
+                        <p class="text-sm text-gray-500 mb-3">${t("subject_teacher")}: ${escapeHtml(exam.teacher)}</p>
+                        <div class="flex flex-wrap items-center gap-2 text-xs font-semibold text-blue-600 bg-blue-50 w-fit px-3 py-1 rounded-full">
+                            <span class="flex items-center gap-1"><i class="fa-solid fa-clock"></i> ${exam.duration} ${t("mins")}</span>
+                            <span>•</span>
+                            <span>${exam.questions.length} ${t("questions")}</span>
+                            ${exam.referenceMaterial ? `
+                                <span>•</span>
+                                <span class="text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded flex items-center gap-1">
+                                    <i class="fa-solid fa-database"></i> ${t("databank_included")}
+                                </span>
+                            ` : ''}
+                        </div>
+                    </div>
+                    <button onclick="startExam('${exam.id}')" class="px-6 py-3 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-semibold shadow-md hover:shadow-lg transition-all flex items-center gap-2 flex-shrink-0">
+                        ${t("start_exam_btn")} <i class="fa-solid fa-circle-chevron-right"></i>
+                    </button>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        function startExam(examId) {
+            const target = window.state.exams.find(e => e.id === examId);
+            if (!target) return;
+
+            window.state.activeExam = JSON.parse(JSON.stringify(target));
+            window.state.activeExam.questions = shuffleArray(window.state.activeExam.questions);
+            window.state.activeExam.answers = new Array(target.questions.length).fill(null);
+            
+            window.state.currentIndex = 0;
+            window.state.timeLeft = target.duration * 60;
+            window.state.cheatWarnings = 0;
+            
+            renderExamPlayer();
+            navigateTo('exam_player');
+            startTimer();
+        }
+
+        function startTimer() {
+            if (window.state.timerInterval) clearInterval(window.state.timerInterval);
+            window.state.timerInterval = setInterval(() => {
+                window.state.timeLeft--;
+                updateTimerDisplay();
+                if (window.state.timeLeft <= 0) {
+                    clearInterval(window.state.timerInterval);
+                    submitActiveExam();
+                }
+            }, 1000);
+        }
+
+        function updateTimerDisplay() {
+            const displayElements = document.querySelectorAll('.timer-text-display');
+            const m = Math.floor(window.state.timeLeft / 60);
+            const s = window.state.timeLeft % 60;
+            const timeString = `${m}:${s < 10 ? '0' : ''}${s}`;
+
+            displayElements.forEach(el => {
+                el.innerText = timeString;
+                if (window.state.timeLeft < 60) {
+                    el.parentElement.className = "flex items-center gap-2 px-4 py-2 rounded-full font-bold text-lg shadow-inner bg-red-100 text-red-600 animate-pulse";
+                } else {
+                    el.parentElement.className = "flex items-center gap-2 px-4 py-2 rounded-full font-bold text-lg shadow-inner bg-blue-100 text-blue-700";
+                }
+            });
+        }
+
+        function renderExamPlayer() {
+            const container = document.getElementById('exam-player-layout-container');
+            container.innerHTML = '';
+
+            const hasRef = !!window.state.activeExam.referenceMaterial;
+            const q = window.state.activeExam.questions[window.state.currentIndex];
+            const isLast = window.state.currentIndex === window.state.activeExam.questions.length - 1;
+
+            const questionCardHtml = `
+                <div class="bg-white rounded-xl shadow-lg overflow-hidden border border-gray-100 flex flex-col h-full min-h-[500px]">
+                    <!-- Header -->
+                    <div class="bg-gray-50 border-b border-gray-200 p-4 flex justify-between items-center flex-wrap gap-4 flex-shrink-0">
+                        <div>
+                            <h2 class="text-xl font-bold text-gray-800">${escapeHtml(window.state.activeExam.subject)}</h2>
+                            <p class="text-sm text-gray-500">${t("question_label")} ${window.state.currentIndex + 1} of ${window.state.activeExam.questions.length}</p>
+                        </div>
+                        <div class="flex items-center gap-2 px-4 py-2 rounded-full font-bold text-lg shadow-inner bg-blue-100 text-blue-700">
+                            <i class="fa-solid fa-clock-rotate-left"></i> <span class="timer-text-display">--:--</span>
+                        </div>
+                    </div>
+
+                    <!-- Question & Answer Body -->
+                    <div class="p-6 md:p-8 overflow-y-auto flex-1">
+                        <h3 class="text-xl md:text-2xl font-medium text-gray-800 mb-6 leading-relaxed">
+                            ${window.state.currentIndex + 1}. ${escapeHtml(q.text)}
+                        </h3>
+                        
+                        <div class="space-y-3">
+                            ${[0, 1, 2, 3].map(idx => {
+                                const optText = q.options[idx];
+                                if (!optText) return '';
+                                const isSelected = window.state.activeExam.answers[window.state.currentIndex] === idx;
+                                return `
+                                    <button onclick="selectPlayerAnswer(${idx})" class="w-full text-left p-4 rounded-xl border-2 transition-all flex items-center gap-4 ${isSelected ? 'border-blue-600 bg-blue-50 text-blue-900 shadow-sm' : 'border-gray-200 hover:border-blue-300 hover:bg-gray-50 text-gray-700'}">
+                                        <div class="w-7 h-7 rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0 ${isSelected ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'}">
+                                            ${String.fromCharCode(65 + idx)}
+                                        </div>
+                                        <span class="text-base md:text-lg leading-snug">${escapeHtml(optText)}</span>
+                                    </button>
+                                `;
+                            }).join('')}
+                        </div>
+                    </div>
+
+                    <!-- Footer Controls -->
+                    <div class="bg-gray-50 border-t border-gray-200 p-4 flex justify-between items-center flex-shrink-0">
+                        <button onclick="prevQuestion()" ${window.state.currentIndex === 0 ? 'disabled' : ''} class="px-4 py-2 rounded-lg font-medium transition-all duration-200 flex items-center justify-center gap-2 bg-gray-200 text-gray-800 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed">
+                            <i class="fa-solid fa-chevron-left"></i> ${t("previous")}
+                        </button>
+                        
+                        ${isLast ? `
+                            <button onclick="submitActiveExam()" class="px-8 py-2 rounded-lg font-medium transition-all duration-200 flex items-center justify-center gap-2 bg-green-600 text-white hover:bg-green-700 shadow-lg">
+                                ${t("submit_exam_btn")} <i class="fa-solid fa-circle-check"></i>
+                            </button>
+                        ` : `
+                            <button onclick="nextQuestion()" class="px-6 py-2 rounded-lg font-medium transition-all duration-200 flex items-center justify-center gap-2 bg-blue-600 text-white hover:bg-blue-700">
+                                ${t("next")} <i class="fa-solid fa-chevron-right"></i>
+                            </button>
+                        `}
+                    </div>
+                </div>
+            `;
+
+            if (hasRef) {
+                container.innerHTML = `
+                    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
+                        <!-- Left Panel: Reference / Databank -->
+                        <div class="lg:col-span-5 bg-white rounded-xl shadow-lg border border-gray-100 p-6 flex flex-col h-[80vh]">
+                            <div class="flex items-center gap-2 border-b pb-3 mb-4 text-blue-800">
+                                <i class="fa-solid fa-file-invoice text-blue-600 flex-shrink-0"></i>
+                                <h3 class="font-bold text-lg">${t("databank_display_title")}</h3>
+                            </div>
+                            <div class="flex-1 overflow-y-auto whitespace-pre-wrap text-gray-700 leading-relaxed font-sans pr-2 bg-slate-50 p-4 rounded-lg border border-slate-100 text-sm">
+                                ${escapeHtml(window.state.activeExam.referenceMaterial)}
+                            </div>
+                        </div>
+
+                        <!-- Right Panel: Core Question Controller -->
+                        <div class="lg:col-span-7 h-[80vh]">
+                            ${questionCardHtml}
+                        </div>
+                    </div>
+                `;
+            } else {
+                container.innerHTML = `
+                    <div class="max-w-3xl mx-auto h-[80vh]">
+                        ${questionCardHtml}
+                    </div>
+                `;
+            }
+            updateTimerDisplay();
+        }
+
+        function selectPlayerAnswer(optionIdx) {
+            window.state.activeExam.answers[window.state.currentIndex] = optionIdx;
+            renderExamPlayer();
+        }
+
+        function prevQuestion() {
+            if (window.state.currentIndex > 0) {
+                window.state.currentIndex--;
+                renderExamPlayer();
+            }
+        }
+
+        function nextQuestion() {
+            if (window.state.currentIndex < window.state.activeExam.questions.length - 1) {
+                window.state.currentIndex++;
+                renderExamPlayer();
+            }
+        }
+
+        async function submitActiveExam() {
+            if (window.state.timerInterval) clearInterval(window.state.timerInterval);
+
+            let score = 0;
+            window.state.activeExam.questions.forEach((q, idx) => {
+                if (window.state.activeExam.answers[idx] === q.correctOption) score++;
+            });
+
+            const total = window.state.activeExam.questions.length;
+            const percentage = (score / total) * 100;
+            const passed = percentage >= window.state.activeExam.passingScore;
+
+            const resultObj = {
+                studentName: window.state.currentStudent.name,
+                studentClass: window.state.currentStudent.studentClass,
+                classNo: window.state.currentStudent.classNo,
+                subject: window.state.activeExam.subject,
+                score: score,
+                total: total,
+                percentage: percentage,
+                passed: passed,
+                warnings: window.state.cheatWarnings,
+                timestamp: Date.now()
+            };
+
+            showLoadingSpinner(true, t("saving_settings"));
+
+            if (window.saveResultToCloud) {
+                await window.saveResultToCloud(resultObj);
+            }
+
+            if (window.state.webhookUrl) {
+                try {
+                    await fetch(window.state.webhookUrl, {
+                        method: 'POST',
+                        mode: 'no-cors',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(resultObj)
+                    });
+                } catch (err) {
+                    console.error("Failed to sync to live Google Sheet:", err);
+                }
+            }
+
+            showLoadingSpinner(false);
+            renderExamResult(resultObj);
+        }
+
+        function renderExamResult(result) {
+            const badgeContainer = document.getElementById('result-badge-container');
+            const header = document.getElementById('result-header');
+
+            if (result.passed) {
+                badgeContainer.innerHTML = `<div class="bg-green-100 w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6 text-green-600 shadow-inner"><i class="fa-solid fa-circle-check text-5xl"></i></div>`;
+                header.innerText = t("congrats");
+            } else {
+                badgeContainer.innerHTML = `<div class="bg-red-100 w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6 text-red-600 shadow-inner"><i class="fa-solid fa-circle-xmark text-5xl"></i></div>`;
+                header.innerText = t("exam_completed");
+            }
+
+            document.getElementById('res-subject').innerText = result.subject;
+            document.getElementById('res-score').innerText = `${result.score} / ${result.total}`;
+            document.getElementById('res-percentage').innerText = `${Math.round(result.percentage)}%`;
+            document.getElementById('res-status').innerText = result.passed ? "PASSED / 合格" : "FAILED / 不合格";
+            document.getElementById('res-status').className = `font-bold ${result.passed ? 'text-green-600' : 'text-red-600'}`;
+
+            navigateTo('exam_result');
+        }
+
+        function renderResults() {
+            const body = document.getElementById('results-table-body');
+            body.innerHTML = '';
+
+            if (window.state.results.length === 0) {
+                body.innerHTML = `
+                    <tr>
+                        <td colspan="6" class="p-8 text-center text-gray-400 font-medium">${t("no_results_server")}</td>
+                    </tr>
+                `;
+                return;
+            }
+
+            const sorted = [...window.state.results].sort((a,b) => b.timestamp - a.timestamp);
+
+            sorted.forEach(r => {
+                const tr = document.createElement('tr');
+                tr.className = "border-b border-gray-100 hover:bg-gray-50 transition-colors text-sm";
+                tr.innerHTML = `
+                    <td class="p-3 text-sm text-gray-500">${new Date(r.timestamp).toLocaleDateString()}</td>
+                    <td class="p-3 font-medium text-gray-800">${escapeHtml(r.studentName)}</td>
+                    <td class="p-3 text-gray-600">${escapeHtml(r.studentClass)} (${escapeHtml(r.classNo)})</td>
+                    <td class="p-3 text-gray-600">${escapeHtml(r.subject)}</td>
+                    <td class="p-3 font-bold text-blue-600">${r.score} / ${r.total}</td>
+                    <td class="p-3">
+                        <span class="px-2.5 py-1 rounded text-xs font-bold ${r.passed ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">
+                            ${r.passed ? 'PASS / 合格' : 'FAIL / 不合格'}
+                        </span>
+                    </td>
+                `;
+                body.appendChild(tr);
+            });
+        }
+
+        function exportResultsCSV() {
+            if (window.state.results.length === 0) {
+                showAlert(t("no_data_title"), t("no_data_desc"), "info");
+                return;
+            }
+
+            const headers = ["Date", "Student Name", "Class", "Class Number", "Subject", "Score", "Percentage", "Result Status", "Cheat Warnings"];
+            const csvRows = [headers.join(",")];
+
+            window.state.results.forEach(r => {
+                const row = [
+                    `"${new Date(r.timestamp).toLocaleString()}"`,
+                    `"${r.studentName.replace(/"/g, '""')}"`,
+                    `"${r.studentClass.replace(/"/g, '""')}"`,
+                    `"${r.classNo}"`,
+                    `"${r.subject.replace(/"/g, '""')}"`,
+                    `"${r.score} / ${r.total}"`,
+                    `"${Math.round(r.percentage)}%"`,
+                    `"${r.passed ? 'PASS' : 'FAIL'}"`,
+                    `"${r.warnings}"`
+                ];
+                csvRows.push(row.join(","));
+            });
+
+            const blob = new Blob([csvRows.join("\n")], { type: 'text/csv;charset=utf-8;' });
+            const url = window.URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.setAttribute('href', url);
+            link.setAttribute('download', `Retake_Results_${new Date().toLocaleDateString().replace(/\//g, '-')}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        function shuffleArray(array) {
+            const shuffled = [...array];
+            for (let i = shuffled.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                const temp = shuffled[i];
+                shuffled[i] = shuffled[j];
+                shuffled[j] = temp;
+            }
+            return shuffled;
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            return text.toString().replace(/[&<>"']/g, function(m) { return map[m]; });
+        }
+
+        function parseCSV(str) {
+            const result = [];
+            let row = [];
+            let inQuotes = false;
+            let val = '';
+            for (let i = 0; i < str.length; i++) {
+                let char = str[i];
+                if (inQuotes) {
+                    if (char === '"') {
+                        if (str[i + 1] === '"') { val += '"'; i++; }
+                        else { inQuotes = false; }
+                    } else { val += char; }
+                } else {
+                    if (char === '"') { inQuotes = true; }
+                    else if (char === ',') { row.push(val.trim()); val = ''; }
+                    else if (char === '\n' || char === '\r') {
+                        if (char === '\r' && str[i + 1] === '\n') i++;
+                        row.push(val.trim());
+                        if (row.some(c => c !== '')) result.push(row);
+                        row = []; val = '';
+                    } else { val += char; }
+                }
+            }
+            row.push(val.trim());
+            if (row.some(c => c !== '')) result.push(row);
+            return result;
+        }
+
+        // --- EXPLICIT WINDOW DELEGATION ---
+        window.closeAlert = closeAlert;
+        window.handleTeacherLogin = handleTeacherLogin;
+        window.switchTeacherTab = switchTeacherTab;
+        window.saveWebhookUrl = saveWebhookUrl;
+        window.openExamCreator = openExamCreator;
+        window.editExam = editExam;
+        window.deleteExam = deleteExam;
+        window.closeExamEditor = closeExamEditor;
+        window.updateEditorQuestionText = updateEditorQuestionText;
+        window.updateEditorQuestionOption = updateEditorQuestionOption;
+        window.updateEditorQuestionCorrectOption = updateEditorQuestionCorrectOption;
+        window.removeEditorQuestion = removeEditorQuestion;
+        window.addManualQuestion = addManualQuestion;
+        window.triggerCSVSelect = triggerCSVSelect;
+        window.handleCSVUpload = handleCSVUpload;
+        window.triggerRegistryCSVSelect = triggerRegistryCSVSelect;
+        window.handleRegistryCSVUpload = handleRegistryCSVUpload;
+        window.clearRegistry = clearRegistry;
+        window.saveCreatedExam = saveCreatedExam;
+        window.handleStudentLogin = handleStudentLogin;
+        window.exitStudentSession = exitStudentSession;
+        window.startExam = startExam;
+        window.selectPlayerAnswer = selectPlayerAnswer;
+        window.prevQuestion = prevQuestion;
+        window.nextQuestion = nextQuestion;
+        window.submitActiveExam = submitActiveExam;
+        window.exportResultsCSV = exportResultsCSV;
+        window.triggerDashboardManualRefresh = triggerDashboardManualRefresh;
+    </script>
+</body>
+</html>
